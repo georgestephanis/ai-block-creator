@@ -2,6 +2,7 @@
 
 [![GPL-2.0-or-later License](https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg)](https://spdx.org/licenses/GPL-2.0-or-later.html)
 [![WordPress 7.0+](https://img.shields.io/badge/WordPress-7.0%2B-blue.svg)](https://wordpress.org)
+[![Try in WordPress Playground](https://img.shields.io/badge/WordPress%20Playground-Try%20Live%20Demo-blue?logo=wordpress&logoColor=white)](https://playground.wordpress.net/?blueprint-url=https://raw.githubusercontent.com/georgestephanis/ai-block-creator/trunk/blueprint.json)
 
 > **Speak it, type it, or screenshot it into existence.**  
 > Create, iteratively refine, and insert custom Gutenberg blocks on the fly directly within the WordPress Block Editor without context switching.
@@ -22,6 +23,14 @@
 ---
 
 ## 🚀 Getting Started
+
+### 🎮 Live Demo in WordPress Playground
+
+Test **AI Block Creator** immediately in your browser — with the core `ai` plugin and OpenAI-compatible provider pre-installed:
+
+[![Open in WordPress Playground](https://img.shields.io/badge/%E2%96%B6%EF%B8%8F_Open_in_WordPress_Playground-21759b?style=for-the-badge&logo=wordpress&logoColor=white)](https://playground.wordpress.net/?blueprint-url=https://raw.githubusercontent.com/georgestephanis/ai-block-creator/trunk/blueprint.json)
+
+> **Note**: The blueprint lands directly on the **Settings > Connectors** screen so you can configure your AI provider (e.g. OpenAI API key, Ollama, LM Studio, or local vLLM endpoint) to test generation against.
 
 ### Requirements
 - **WordPress**: 7.0 or higher.
