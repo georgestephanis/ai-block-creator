@@ -50,6 +50,7 @@ ai-block-creator/
 ## Architectural Principles & Rules
 
 ### 1. WordPress Core AI Client Integration
+- The plugin declares `Requires Plugins: ai` (WordPress 6.5+ Plugin Dependencies) and relies on WordPress core's AI client APIs.
 - Use `wp_ai_client_prompt()` (the WordPress core wrapper), not `\WordPress\AiClient\AiClient::prompt()`/`::generateTextResult()` directly. The wrapper is what applies the `wp_ai_client_default_request_timeout` filter, `wp_supports_ai()`, `wp_ai_client_prevent_prompt`, and converts every exception to a consistent `WP_Error` — calling the raw builder skips all of that silently.
 - When generating structured text/JSON with thinking models (e.g. Qwen 3.6, DeepSeek), configure `ModelConfig` with a custom option:
   ```php

@@ -19,6 +19,16 @@
 			"step": "installPlugin",
 			"pluginData": {
 				"resource": "wordpress.org/plugins",
+				"slug": "ai"
+			},
+			"options": {
+				"activate": true
+			}
+		},
+		{
+			"step": "installPlugin",
+			"pluginData": {
+				"resource": "wordpress.org/plugins",
 				"slug": "ai-provider-for-openai-compatible-servers"
 			},
 			"options": {

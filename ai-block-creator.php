@@ -6,6 +6,7 @@
  * Version: 1.0.0
  * Requires at least: 7.0
  * Requires PHP: 7.4
+ * Requires Plugins: ai
  * Author: George Stephanis
  * Author URI: https://georgestephanis.wordpress.com
  * License: GPL-2.0-or-later

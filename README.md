@@ -24,8 +24,9 @@
 ## 🚀 Getting Started
 
 ### Requirements
-- **WordPress**: 7.0 or higher (or WordPress with core AI Client enabled).
+- **WordPress**: 7.0 or higher.
 - **PHP**: 7.4 or higher (PHP 8.2+ recommended).
+- **Required Plugin**: [WordPress AI Plugin](https://wordpress.org/plugins/ai/) (`Requires Plugins: ai`).
 - **AI Connector**: An active connector registered with the WordPress AI Client (e.g., [AI Provider for OpenAI Compatible Servers](https://wordpress.org/plugins/ai-provider-for-openai-compatible-servers/)).
 
 ### Installation
