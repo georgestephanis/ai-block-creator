@@ -16,19 +16,20 @@ Users can:
 ## 2. Technical Architecture
 
 ### 2.1 Backend (PHP / WordPress)
-- **CPT `wp_block_def`**: Stores custom AI block definitions (slug, title, icon, attributes schema, edit template, render template, scoped CSS, and version).
+- **CPT `ai_block_def`** (`AI_Block_Store::POST_TYPE`): Stores custom AI block definitions (slug, title, icon, attributes schema, edit fields, render template, scoped CSS). Read/write access to these posts goes exclusively through `AI_Block_Store` — it's the only class permitted to call `get_posts()`/`get_post_meta()`/`update_post_meta()` against them, since it's also where validation and caching live.
 - **Dynamic Registration (`register_block_type`)**:
-  - Automatically loads all active `wp_block_def` posts on `init`.
-  - Configures attributes and server-side render callback `Ai_Block_Renderer::render()`.
-  - Injects scoped styles on frontend and editor.
+  - Automatically loads all published `ai_block_def` posts on `init` via `AI_Block_Store::all()` (request-scoped cached).
+  - Configures attributes and server-side render callback `AI_Block_Renderer::render()`.
+  - Registers each block's CSS as its own `wp_register_style()`/`wp_add_inline_style()` handle, passed to `register_block_type()` as `style`/`editor_style` — WordPress then enqueues it only on pages/editor sessions where that specific block is present, rather than inlining every saved block's CSS into every page.
 - **REST Controller (`/wp-json/ai-block-creator/v1/`)**:
-  - `POST /generate`: Integrates with WordPress 7.0+ AI Client (`wp_ai_client_prompt()`) to generate structured block definitions. Handles vision/multimodal requests when screenshots are uploaded.
-  - `GET /blocks`: Returns all created custom block definitions.
-  - `POST /blocks`: Saves/updates a custom block definition to the database.
-  - `DELETE /blocks/<id>`: Deletes a custom block definition.
+  - `POST /generate`: Integrates with WordPress 7.0+ AI Client (`wp_ai_client_prompt()`) to generate structured block definitions, including conversation history (`withHistory()`) and a JSON response schema (`asJsonResponse()`). Handles vision/multimodal requests when screenshots are uploaded (MIME-allowlisted, capped at 4MB). Requires `edit_posts` — nothing is persisted by this endpoint.
+  - `GET /blocks`: Returns all saved custom block definitions. Requires `edit_posts`.
+  - `POST /blocks`: Saves/updates a custom block definition to the database. Requires `unfiltered_html` — the saved definition is served to every site visitor, so `edit_posts` alone is not sufficient here even though it is for generating a draft.
+  - `DELETE /blocks/<id>`: Deletes a custom block definition, after verifying the target post is actually an `ai_block_def` (not an arbitrary post ID). Requires `unfiltered_html`.
 - **Security & Permissions**:
-  - All REST endpoints verify `edit_posts` / `manage_options` permissions and WordPress REST nonces.
-  - Template output sanitization and attribute validation.
+  - REST endpoints are split across two capability levels (`edit_posts` for read/generate, `unfiltered_html` for save/delete) rather than one blanket check, since generating a draft and publishing something every visitor's browser will load are very different levels of risk. WordPress REST nonces are handled by the block editor's built-in `apiFetch` middleware.
+  - Every block definition — whether it came from the AI or was POSTed directly to `/blocks` — passes through `AI_Block_Store::normalize_and_validate()` before being stored: unknown top-level keys are dropped, attribute/edit-field types are allowlisted, `render_html` is passed through `wp_kses_post()` for anyone without `unfiltered_html`, and `css` always has script/style-breakout constructs stripped regardless of capability.
+  - The renderer (`AI_Block_Renderer::render_template()`) escapes each interpolated `{{var}}` according to the attribute context it appears in — `esc_url()` inside `href`/`src`, `safecss_filter_attr()` inside `style="..."`, `esc_html()` everywhere else — rather than one escaper for every context.
 
 ### 2.2 Frontend (React / Gutenberg)
 - **Editor Entrypoints**:
@@ -74,10 +75,18 @@ Users can:
     { "name": "accentColor", "label": "Accent Color", "type": "color" },
     { "name": "isFeatured", "label": "Highlight as Featured", "type": "toggle" }
   ],
-  "render_html": "<div class=\"ai-block-pricing-card {{isFeatured ? 'featured' : ''}}\" style=\"--accent: {{accentColor}};\">...</div>",
+  "render_html": "<div class=\"ai-block-pricing-card{{#if isFeatured}} featured{{/if}}\" style=\"--accent: {{accentColor}};\">...</div>",
   "css": ".ai-block-pricing-card { border-radius: 12px; padding: 24px; ... }"
 }
 ```
+
+The `render_html` mini-template language supports:
+- `{{attributeName}}` — interpolates a value, escaped for the attribute context it appears in (URL inside `href`/`src`, CSS inside `style="..."`, HTML text otherwise).
+- `{{{attributeName}}}` — raw/rich HTML output (triple braces), passed through `wp_kses_post()` for anyone without `unfiltered_html`. Only use this when the attribute is genuinely meant to hold markup.
+- `{{#if attributeName}}...{{/if}}` / `{{^if attributeName}}...{{/if}}` — boolean conditionals, which may be nested.
+- `{{#list attributeName}}<li>{{item}}</li>{{/list}}` — repeats the inner template once per line (or per array item), with `{{item}}` bound to each one. `{{item}}` is only available inside a `{{#list}}` block, not other attribute names.
+
+This grammar is implemented twice and must stay in sync: `AI_Block_Renderer::render_template()` (PHP, front end) and `interpolateTemplate()` in `src/runtime/dynamic-block-factory.js` (editor preview).
 
 ---
 
