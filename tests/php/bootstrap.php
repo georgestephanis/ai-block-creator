@@ -10,7 +10,7 @@
  * needs the full WP_UnitTestCase factory/fixture machinery, so a real,
  * already-configured WordPress install is both simpler to set up and closer
  * to the environment these functions actually run in. This mirrors exactly
- * how the fixes in plans/code-review-2026-09-03.md were originally verified
+ * how the fixes in plans/done/code-review-2026-09-03.md were originally verified
  * (via `wp eval-file` against this same install) — these tests formalize
  * that verification instead of re-deriving it ad hoc.
  *

@@ -3,7 +3,7 @@
  * Tests for AI_Block_Store.
  *
  * Covers the validation/sanitization findings from
- * plans/code-review-2026-09-03.md (SEC-1, SEC-2, BUG-8, BUG-9, BUG-10,
+ * plans/done/code-review-2026-09-03.md (SEC-1, SEC-2, BUG-8, BUG-9, BUG-10,
  * BUG-11) that AI_Block_Store::normalize_and_validate() exists to close, and
  * a real save/get/delete round trip against the database. Every test that
  * creates a post deletes it in tearDown() -- there is no per-test

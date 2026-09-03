@@ -2,7 +2,7 @@
 /**
  * Tests for AI_Block_Renderer::render_template().
  *
- * Covers the exact cases from plans/code-review-2026-09-03.md that
+ * Covers the exact cases from plans/done/code-review-2026-09-03.md that
  * originally shipped broken (BUG-1, BUG-2, BUG-4) and were verified ad hoc
  * against a real wp-load.php bootstrap during that fix — this formalizes
  * that verification as a real, repeatable test suite instead.

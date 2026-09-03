@@ -4,7 +4,7 @@
  * and its PHPUnit counterpart in tests/php/RendererTest.php). Both
  * implementations must behave identically; these cases mirror that suite so a
  * divergence between them fails a test instead of shipping as a bug (this is
- * exactly how BUG-1 through BUG-4 in plans/code-review-2026-09-03.md slipped
+ * exactly how BUG-1 through BUG-4 in plans/done/code-review-2026-09-03.md slipped
  * through originally).
  */
 

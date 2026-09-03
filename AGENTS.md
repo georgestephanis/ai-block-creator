@@ -18,22 +18,29 @@ ai-block-creator/
 │   ├── class-ai-block-renderer.php       # Dynamic PHP render callback & template parser
 │   └── class-ai-block-rest-controller.php # REST API controller (/generate, /blocks)
 ├── plans/
-│   ├── architecture-and-design.md        # Architecture specification document
-│   ├── code-review-2026-09-03.md         # Security/correctness review findings
-│   └── TODO.md                           # Tracked task list (what's fixed, what's open)
+│   ├── architecture-and-design.md        # Architecture specification document (kept current)
+│   └── done/                             # Dated, point-in-time records — not living docs
+│       ├── code-review-2026-09-03.md     # Security/correctness review findings
+│       └── TODO-2026-09-03.md            # That review's task list (what got fixed, what's still open)
 ├── src/
 │   ├── index.js                          # Gutenberg editor entrypoint & plugin registration
 │   ├── components/
 │   │   ├── AIBlockCreatorModal.js       # Main creation modal & conversational thread
+│   │   ├── BlockLibrarySidebar.js       # PluginSidebar: list/insert/refine/delete saved blocks
 │   │   ├── BlockPreview.js              # Interactive live preview & attribute tester
 │   │   ├── ImageDropzone.js             # Drag-and-drop & clipboard paste listener
 │   │   └── VoiceInput.js                # Web Speech API voice dictation
 │   ├── runtime/
-│   │   └── dynamic-block-factory.js     # Client-side dynamic wp.blocks.registerBlockType
+│   │   ├── dynamic-block-factory.js     # Client-side dynamic wp.blocks.registerBlockType
+│   │   └── test/                        # Jest tests for dynamic-block-factory.js
 │   └── styles.scss                      # Scoped editor & modal UI styling
+├── tests/
+│   ├── php/                              # PHPUnit suite (bootstrap.php, RendererTest.php, BlockStoreTest.php)
+│   └── js/mocks/                         # Jest module stubs — see jest-unit.config.js
 ├── build/                                # Webpack compiled output (committed — see below)
 ├── blueprint.json                        # WordPress Playground blueprint
 ├── composer.json / phpcs.xml.dist        # PHPCS/WPCS lint config
+├── phpunit.xml.dist / jest-unit.config.js # Test suite configs
 ├── readme.txt                            # WordPress.org standard plugin readme
 └── README.md                             # Project overview
 ```
@@ -58,7 +65,7 @@ ai-block-creator/
 - **Every block definition is untrusted input until it passes `AI_Block_Store::normalize_and_validate()`.** `render_html` is only trusted verbatim for a user with `unfiltered_html`; otherwise it's passed through `wp_kses_post()` (extended to allow `style`/`class`). `css` always has `<script>`/`<style>`/`@import`/`expression()`/`javascript:` stripped, unconditionally. Saving/deleting a block definition requires `unfiltered_html` — it publishes to every site visitor, so `edit_posts` (which any Contributor has) is not enough. Generating a *draft* (the `/generate` endpoint) stays at `edit_posts` since nothing is persisted.
 - **Database Gotcha**: When saving JSON strings into post meta (`_ai_block_definition`), always use `wp_slash( wp_json_encode( $def ) )` so WordPress's internal `stripslashes_deep` in `update_post_meta` does not corrupt JSON quotes. `AI_Block_Store::save()` already does this — don't reimplement it.
 - On `init`, all published `ai_block_def` posts are registered server-side with `register_block_type()` using `AI_Block_Renderer::render`, and each block's CSS is registered as its own `wp_register_style()`/`wp_add_inline_style()` handle (passed as `style`/`editor_style`) so WordPress only enqueues it on pages/editor sessions where the block is actually present — never inline every saved block's CSS on every page.
-- The renderer template language (`{{var}}`, `{{{raw}}}`, `{{#if}}`/`{{^if}}`, `{{#list}}`) is implemented twice — `AI_Block_Renderer::render_template()` in PHP (front end) and `interpolateTemplate()` in `dynamic-block-factory.js` (editor preview). **Keep them behaviorally identical**, including escaping rules (context-aware: `href`/`src` → URL-escaped, `style="..."` → CSS-filtered, everything else → HTML-escaped) — a divergence here is exactly the kind of bug that shipped before this was reviewed (see `plans/code-review-2026-09-03.md` BUG-1 through BUG-4).
+- The renderer template language (`{{var}}`, `{{{raw}}}`, `{{#if}}`/`{{^if}}`, `{{#list}}`) is implemented twice — `AI_Block_Renderer::render_template()` in PHP (front end) and `interpolateTemplate()` in `dynamic-block-factory.js` (editor preview). **Keep them behaviorally identical**, including escaping rules (context-aware: `href`/`src` → URL-escaped, `style="..."` → CSS-filtered, everything else → HTML-escaped) — a divergence here is exactly the kind of bug that shipped before this was reviewed (see `plans/done/code-review-2026-09-03.md` BUG-1 through BUG-4).
 - In the Block Editor, `registerDynamicAiBlock( blockDef )` registers the block client-side immediately so that freshly created blocks can be inserted without requiring a page reload. Always register from the **server's** returned definition (e.g. the response to `POST /blocks`), not the pre-save client-side draft — the server is authoritative and may have altered the slug.
 
 ### 3. Frontend & Build Conventions
@@ -115,4 +122,4 @@ ai-block-creator/
   ```
   When changing escaping or template-language behavior, verify against a real `wp-load.php` bootstrap (not stubbed `esc_*`/`wp_kses_*` functions) — the stubs used during initial development hid a real bug where a stubbed `esc_url()` didn't actually strip `javascript:` the way core's does. `tests/php/RendererTest.php` formalizes exactly this verification; extend it rather than re-deriving ad hoc checks by hand.
 
-`tests/php/` (PHPUnit) and `src/**/test/*.test.js` (Jest) are the automated test suites — see `composer test` / `npm run test-unit-js` above. Both were built by writing tests for the exact bugs listed in `plans/code-review-2026-09-03.md` and running them for real; in the process, `tests/php/BlockStoreTest.php` caught a real bug this way — `AI_Block_Store::sanitize_attributes()`/`sanitize_edit_fields()` were using `sanitize_key()` (which lowercases) on attribute names, silently renaming every camelCase attribute (`accentColor` → `accentcolor`) — and the `register_post_meta()` sanitize_callback in `ai-block-creator.php` was double-unslashing, which corrupted and dropped any saved block whose `render_html` contained an escaped quote (i.e. nearly all of them). Both are fixed; keep writing tests that exercise real WordPress functions against the real bootstrap rather than hand-rolled stubs — that's exactly how both bugs were caught.
+`tests/php/` (PHPUnit) and `src/**/test/*.test.js` (Jest) are the automated test suites — see `composer test` / `npm run test-unit-js` above. Both were built by writing tests for the exact bugs listed in `plans/done/code-review-2026-09-03.md` and running them for real; in the process, `tests/php/BlockStoreTest.php` caught a real bug this way — `AI_Block_Store::sanitize_attributes()`/`sanitize_edit_fields()` were using `sanitize_key()` (which lowercases) on attribute names, silently renaming every camelCase attribute (`accentColor` → `accentcolor`) — and the `register_post_meta()` sanitize_callback in `ai-block-creator.php` was double-unslashing, which corrupted and dropped any saved block whose `render_html` contained an escaped quote (i.e. nearly all of them). Both are fixed; keep writing tests that exercise real WordPress functions against the real bootstrap rather than hand-rolled stubs — that's exactly how both bugs were caught.
