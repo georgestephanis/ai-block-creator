@@ -101,6 +101,7 @@ This project embraces collaborative AI-assisted development. Below is a log of m
   * Built the Gutenberg editor extension: top toolbar button, block inserter card (`/ai-block`), Web Speech voice dictation, clipboard screenshot paste listener, and interactive live preview canvas with tabs.
   * Created dynamic runtime factory (`dynamic-block-factory.js`) for instant client-side block registration.
   * Authored `README.md`, `AGENTS.md`, `readme.txt`, and WordPress Playground `blueprint.json`.
+  * **Follow-up Audit & Bugfix (September 2026)**: Identified and resolved a greedy regex matching bug in both PHP (`AI_Block_Renderer`) and JS (`dynamic-block-factory.js`) template interpolation that previously prevented multiple variables inside `style="..."` (e.g. `--accent: {{accent}}; background: {{bg}};`) and complex `href="..."` attributes from being substituted. Added full PHPUnit and Jest test coverage to lock in multi-variable attribute interpolation.
 
 ### Claude Fable 5.1 (Claude Code)
 * **Date**: September 2026
