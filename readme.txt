@@ -22,6 +22,7 @@ When writing a post, you shouldn't have to leave the editor or scaffold complex 
 * **Iterate Conversationally**: Refine colors, layouts, and attributes through follow-up prompts before committing.
 * **Live Interactive Preview**: Test attribute controls, inspect generated markup and scoped CSS, and watch changes render in real time.
 * **1-Click Insert & Save**: Automatically registers the custom block on the site and inserts it directly onto your editor canvas.
+* **Block Library**: Every saved block appears in the AI Block Library panel (editor's More menu), where you can insert it again, reopen it for further refinement, or delete it.
 
 AI Block Creator natively leverages the official **WordPress 7.0+ core AI Client** (`WordPress\AiClient\AiClient`), integrating with any active AI Connector configured on your site.
 
@@ -41,9 +42,18 @@ No. The plugin uses whatever AI Connector you have configured with the WordPress
 Yes! Generated blocks are registered using standard WordPress block APIs (`register_block_type` and `wp.blocks.registerBlockType`), with full support for sidebar inspector controls, custom attributes, and responsive scoped styles.
 
 = How do screenshots work? =
-You can paste (`Cmd+V` / `Ctrl+V`), drag & drop, or select an image file. The image is passed to the AI prompt builder for vision-driven block creation.
+You can paste (`Cmd+V` / `Ctrl+V`), drag & drop, or select an image file (PNG, JPEG, WEBP, or GIF, up to 4MB). The image is passed to the AI prompt builder for vision-driven block creation.
+
+= Can anyone save or delete blocks? =
+Anyone who can edit posts can generate and preview a block. Saving it to the library (which inserting also requires, since it saves first) needs the `unfiltered_html` capability, which Administrators and Editors have by default and Authors/Contributors do not — the same trust boundary WordPress already applies to raw HTML in post content, since a saved block is served to every visitor of your site.
+
+= Where do my saved blocks live, and what happens if I delete the plugin? =
+Saved blocks are stored as a private custom post type. Deactivating the plugin does not remove them (so reactivating brings everything back); uninstalling it through **Plugins > Delete** does.
 
 == Changelog ==
 
 = 1.0.0 =
 * Initial release: Conversational custom block creation, voice dictation, screenshot dropzone, live preview, dynamic block registration, and WordPress AI Client integration.
+* Security hardening: saving/deleting a block now requires the `unfiltered_html` capability, and both the block's markup and its CSS are validated/sanitized before they're stored.
+* Added the AI Block Library panel for managing previously saved blocks (insert, refine, delete).
+* The editor UI now follows your chosen admin color scheme instead of a fixed accent color.

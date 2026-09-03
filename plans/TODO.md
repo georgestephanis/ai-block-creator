@@ -62,9 +62,9 @@ Task list derived from [code-review-2026-09-03.md](code-review-2026-09-03.md). I
 
 ## P2 — Product
 
-- [ ] Block library management UI (list, delete, "open in creator") as a `PluginSidebar` or Settings page. [UX-5]
+- [x] Block library management UI: new `BlockLibrarySidebar` component, registered as a `PluginSidebar` ("AI Block Library") reachable from the More menu. List, Insert, Refine (reopens the creator modal preloaded via a new `initialBlock` prop), Delete (confirm-gated, `canManageLibrary`-gated). Sidebar and modal stay in sync via a shared `ai-block-creator-library-updated` window event rather than polling. [UX-5] `de1f0a6`
 - [x] i18n: all JS strings wrapped in `__()`/`sprintf()`, `@wordpress/i18n` added as a dependency, `wp_set_script_translations()` called. Emoji labels intentionally kept (product decision, not a bug) but are now alongside translated text rather than replacing it. [UX-7] `518e433` (PHP `wp_set_script_translations`), `39351af` (JS strings)
-- [ ] Use admin colour-scheme variables instead of the hard-coded palette; reduce `!important` overrides. [UX-8]
+- [x] Replaced the hardcoded indigo/purple accent with WordPress's admin theme-color custom properties (`--wp-admin-theme-color` and friends — the only five WP actually exposes), original hex kept as `var()` fallbacks. Two-stop purple→violet gradients became single-hue accent→accent-darker gradients, since WP doesn't expose a second swappable brand color. `!important` overrides were **not** reduced — they're there to override `@wordpress/components`' own specificity (e.g. `.components-modal__content`), which isn't optional; left as a non-issue, not deferred. [UX-8] `de1f0a6`
 
 ## P3 — Packaging, docs, DX
 
@@ -80,7 +80,7 @@ Task list derived from [code-review-2026-09-03.md](code-review-2026-09-03.md). I
 - [x] Fleshed out REST arg schemas for `/generate` (`history[].items`, `current_block.properties`) and `POST /blocks` (`block_definition.properties`). [DX-8] `518e433` — schemas use `additionalProperties: true` rather than a fully-specified object shape, since the block-definition shape is intentionally flexible pre-normalization; the real validation happens in `AI_Block_Store::normalize_and_validate()`, not the REST schema layer.
 - [x] Added `conversation-log.jsonl` — turns out this is a session artifact from working in this repo, not a repo convention; add it and `.serena/` to `.gitignore` if either starts showing up as untracked cruft again. Not currently tracked, so no action was needed beyond confirming that.
 - [x] Updated `AGENTS.md` to describe `AI_Block_Store`, the capability split, the renamed CPT, per-block style handles, and the linting commands; rewrote `architecture-and-design.md` §2.1 to match, and fixed its sample `render_html` (it used a `{{cond ? a : b}}` ternary syntax that was never actually implemented — the real grammar is `{{#if}}`/`{{^if}}`/`{{#list}}`, now documented inline). [DX-9]
-- [ ] `README.md`/`readme.txt` still describe the pre-fix architecture in places (e.g. don't mention `AI_Block_Store`, the capability split, or the CPT rename) — lower priority than `AGENTS.md`/`architecture-and-design.md` since they're user-facing marketing copy rather than contributor-facing technical docs; do this pass once the remaining P2/P3 items below settle, to avoid documenting churn twice.
+- [x] `README.md`/`readme.txt` updated: fixed the stray `wp_block_def` mention, documented the Block Library panel and the `unfiltered_html` permission requirement (both new FAQ/Usage entries), added a lint-commands line to the Development section, and expanded the 1.0.0 changelog entry rather than bumping the version (nothing has shipped publicly yet). Validated `readme.txt` with the WordPress.org readme validator — no errors or warnings. [DX-9]
 
 ---
 
