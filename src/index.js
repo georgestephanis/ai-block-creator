@@ -10,6 +10,7 @@ import { Button } from '@wordpress/components';
 import { __ } from '@wordpress/i18n';
 import { registerDynamicAiBlock } from './runtime/dynamic-block-factory';
 import AIBlockCreatorModal from './components/AIBlockCreatorModal';
+import BlockLibrarySidebar from './components/BlockLibrarySidebar';
 import './styles.scss';
 
 const OPEN_EVENT = 'open-ai-block-creator';
@@ -90,38 +91,54 @@ function watchForHeaderToolbar( onOpen ) {
 function AIBlockCreatorApp() {
 	const [ isModalOpen, setIsModalOpen ] = useState( false );
 	const [ placeholderClientId, setPlaceholderClientId ] = useState( null );
+	const [ initialBlock, setInitialBlock ] = useState( null );
+
+	const openModal = ( { clientId = null, block = null } = {} ) => {
+		setPlaceholderClientId( clientId );
+		setInitialBlock( block );
+		setIsModalOpen( true );
+	};
 
 	// Listen for the open event dispatched by the slash-command placeholder
 	// block, carrying the placeholder's clientId so the eventual insert can
 	// replace it in place instead of appending at the end of the post.
 	useEffect( () => {
 		const handleOpenEvent = ( event ) => {
-			setPlaceholderClientId( event.detail?.clientId ?? null );
-			setIsModalOpen( true );
+			openModal( { clientId: event.detail?.clientId ?? null } );
 		};
 		window.addEventListener( OPEN_EVENT, handleOpenEvent );
 		return () => window.removeEventListener( OPEN_EVENT, handleOpenEvent );
+		// eslint-disable-next-line react-hooks/exhaustive-deps -- openModal
+		// is redefined every render but doesn't close over anything that
+		// changes in a way this listener needs to react to.
 	}, [] );
 
 	useEffect( () => {
-		return watchForHeaderToolbar( () => setIsModalOpen( true ) );
+		return watchForHeaderToolbar( () => openModal() );
+		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [] );
 
 	return (
 		<>
 			<PluginMoreMenuItem
 				icon="star-filled"
-				onClick={ () => setIsModalOpen( true ) }
+				onClick={ () => openModal() }
 			>
 				{ __( 'AI Block Creator', 'ai-block-creator' ) }
 			</PluginMoreMenuItem>
 
+			<BlockLibrarySidebar
+				onRefine={ ( block ) => openModal( { block } ) }
+			/>
+
 			<AIBlockCreatorModal
 				isOpen={ isModalOpen }
 				placeholderClientId={ placeholderClientId }
+				initialBlock={ initialBlock }
 				onClose={ () => {
 					setIsModalOpen( false );
 					setPlaceholderClientId( null );
+					setInitialBlock( null );
 				} }
 			/>
 		</>

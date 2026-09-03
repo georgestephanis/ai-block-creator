@@ -2,7 +2,7 @@
  * AI Block Creator Main Modal & Conversational Interface.
  */
 
-import { useState } from '@wordpress/element';
+import { useState, useEffect } from '@wordpress/element';
 import {
 	Modal,
 	Button,
@@ -18,6 +18,7 @@ import VoiceInput from './VoiceInput';
 import ImageDropzone from './ImageDropzone';
 import BlockPreview from './BlockPreview';
 import { registerDynamicAiBlock } from '../runtime/dynamic-block-factory';
+import { notifyLibraryUpdated } from './BlockLibrarySidebar';
 
 const SUGGESTIONS = [
 	{
@@ -59,6 +60,7 @@ export default function AIBlockCreatorModal( {
 	isOpen,
 	onClose,
 	placeholderClientId,
+	initialBlock,
 } ) {
 	const [ prompt, setPrompt ] = useState( INITIAL_STATE.prompt );
 	const [ screenshot, setScreenshot ] = useState( INITIAL_STATE.screenshot );
@@ -77,6 +79,31 @@ export default function AIBlockCreatorModal( {
 
 	const { insertBlocks, replaceBlocks, removeBlock } =
 		useDispatch( 'core/block-editor' );
+
+	// Seed the modal with a block loaded from the library (see
+	// BlockLibrarySidebar's "Refine" action) on the isOpen false→true
+	// transition only — not on every initialBlock reference change while
+	// the modal stays open, which would clobber whatever the user is
+	// mid-way through editing.
+	useEffect( () => {
+		if ( isOpen && initialBlock ) {
+			setCurrentBlock( initialBlock );
+			setConversation( [
+				{
+					role: 'assistant',
+					content: sprintf(
+						// translators: %s: block title.
+						__(
+							'Loaded "%s" from your library. Describe changes to refine it, or use the buttons below to reinsert or resave it as-is.',
+							'ai-block-creator'
+						),
+						initialBlock.title || initialBlock.name
+					),
+				},
+			] );
+		}
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [ isOpen ] );
 
 	if ( ! isOpen ) {
 		return null;
@@ -209,6 +236,7 @@ export default function AIBlockCreatorModal( {
 
 			const savedBlock = response?.block || currentBlock;
 			registerDynamicAiBlock( savedBlock );
+			notifyLibraryUpdated();
 			onSaved( savedBlock );
 		} catch ( err ) {
 			setError(

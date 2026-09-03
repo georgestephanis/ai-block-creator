@@ -2,6 +2,18 @@
  * AI Block Creator - Editor Styles
  */
 
+// WordPress admin exposes exactly five CSS custom properties that track the
+// user's chosen admin color scheme (Blue, Coffee, Ectoplasm, Midnight, ...):
+// --wp-admin-theme-color, --wp-admin-theme-color--rgb,
+// --wp-admin-theme-color-darker-10/-20, and --wp-admin-border-width-focus.
+// Use those instead of hardcoding an indigo/purple accent, so this UI
+// actually follows the scheme the user picked rather than clashing with it.
+// The literal colors are only fallbacks for the rare case those variables
+// aren't present.
+$ai-accent: var(--wp-admin-theme-color, #4f46e5);
+$ai-accent-darker-10: var(--wp-admin-theme-color-darker-10, #4338ca);
+$ai-accent-darker-20: var(--wp-admin-theme-color-darker-20, #3730a3);
+
 /* Header Toolbar Button */
 .ai-header-btn-wrap {
 	display: inline-flex;
@@ -10,7 +22,7 @@
 }
 
 .ai-sparkle-toolbar-btn {
-	background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%) !important;
+	background: linear-gradient(135deg, #{$ai-accent} 0%, #{$ai-accent-darker-10} 100%) !important;
 	color: #fff !important;
 	border: none !important;
 	border-radius: 6px !important;
@@ -20,14 +32,14 @@
 	display: inline-flex !important;
 	align-items: center !important;
 	gap: 6px !important;
-	box-shadow: 0 2px 4px rgba(79, 70, 229, 0.2) !important;
+	box-shadow: 0 2px 4px rgba(var(--wp-admin-theme-color--rgb, 79, 70, 229), 0.2) !important;
 	transition: all 0.2s ease-in-out !important;
 	cursor: pointer;
 
 	&:hover {
-		background: linear-gradient(135deg, #4338ca 0%, #6d28d9 100%) !important;
+		background: linear-gradient(135deg, #{$ai-accent-darker-10} 0%, #{$ai-accent-darker-20} 100%) !important;
 		transform: translateY(-1px);
-		box-shadow: 0 4px 8px rgba(79, 70, 229, 0.3) !important;
+		box-shadow: 0 4px 8px rgba(var(--wp-admin-theme-color--rgb, 79, 70, 229), 0.3) !important;
 	}
 
 	.ai-btn-icon {
@@ -77,7 +89,7 @@
 	}
 
 	.ai-inserter-btn {
-		background: #4f46e5 !important;
+		background: #{$ai-accent} !important;
 		color: #fff !important;
 		border-radius: 8px !important;
 		font-weight: 600 !important;
@@ -224,8 +236,8 @@
 		resize: vertical;
 
 		&:focus {
-			border-color: #4f46e5;
-			box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.2);
+			border-color: #{$ai-accent};
+			box-shadow: 0 0 0 2px rgba(var(--wp-admin-theme-color--rgb, 79, 70, 229), 0.2);
 		}
 	}
 }
@@ -360,7 +372,7 @@
 }
 
 .ai-generate-submit-btn {
-	background: #4f46e5 !important;
+	background: #{$ai-accent} !important;
 	color: #fff !important;
 	border-radius: 8px !important;
 	font-weight: 600 !important;
@@ -417,7 +429,7 @@
 			border-bottom-right-radius: 2px;
 
 			.ai-chat-role {
-				color: #4338ca;
+				color: #{$ai-accent-darker-10};
 			}
 		}
 
@@ -539,8 +551,8 @@
 				border-bottom: 2px solid transparent;
 
 				&.is-active {
-					color: #4f46e5;
-					border-bottom-color: #4f46e5;
+					color: #{$ai-accent};
+					border-bottom-color: #{$ai-accent};
 					font-weight: 600;
 				}
 			}
@@ -622,17 +634,95 @@
 		gap: 10px;
 
 		.ai-insert-btn {
-			background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%) !important;
+			background: linear-gradient(135deg, #{$ai-accent} 0%, #{$ai-accent-darker-10} 100%) !important;
 			color: #fff !important;
 			font-weight: 600 !important;
 			padding: 8px 20px !important;
 			border-radius: 8px !important;
-			box-shadow: 0 2px 6px rgba(79, 70, 229, 0.25) !important;
+			box-shadow: 0 2px 6px rgba(var(--wp-admin-theme-color--rgb, 79, 70, 229), 0.25) !important;
 
 			&:hover {
-				background: linear-gradient(135deg, #4338ca 0%, #6d28d9 100%) !important;
+				background: linear-gradient(135deg, #{$ai-accent-darker-10} 0%, #{$ai-accent-darker-20} 100%) !important;
 				transform: translateY(-1px);
 			}
 		}
+	}
+}
+
+/* Block Library Sidebar */
+.ai-library-sidebar {
+	padding: 16px;
+}
+
+.ai-library-loading {
+	display: flex;
+	justify-content: center;
+	padding: 24px 0;
+}
+
+.ai-library-empty {
+	color: #64748b;
+	font-size: 13px;
+	line-height: 1.5;
+}
+
+.ai-library-count {
+	color: #64748b;
+	font-size: 12px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	margin: 0 0 12px;
+}
+
+.ai-library-list {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.ai-library-row {
+	background: #fff;
+	border: 1px solid #e2e8f0;
+	border-radius: 8px;
+	padding: 12px;
+
+	.ai-library-row-main {
+		display: flex;
+		align-items: flex-start;
+		gap: 8px;
+	}
+
+	.ai-library-row-icon {
+		color: #{$ai-accent};
+		flex-shrink: 0;
+	}
+
+	.ai-library-row-text {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		min-width: 0;
+	}
+
+	.ai-library-row-title {
+		font-size: 13px;
+		color: #1e293b;
+	}
+
+	.ai-library-row-desc {
+		font-size: 12px;
+		color: #64748b;
+	}
+
+	.ai-library-row-error {
+		margin: 8px 0 0;
+	}
+
+	.ai-library-row-actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px;
+		margin-top: 10px;
 	}
 }
