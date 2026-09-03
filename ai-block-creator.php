@@ -260,8 +260,8 @@ function supports_image_input(): bool {
 
 	if ( function_exists( 'wp_ai_client_prompt' ) ) {
 		try {
-			$builder = wp_ai_client_prompt( 'Test' );
-			$builder = $builder->withFile( 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'image/png' );
+			$builder         = wp_ai_client_prompt( 'Test' );
+			$builder         = $builder->withFile( 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'image/png' );
 			$supports_images = (bool) $builder->is_supported_for_text_generation();
 		} catch ( \Throwable $t ) {
 			$supports_images = false;

@@ -114,15 +114,12 @@ class AI_Block_REST_Controller extends WP_REST_Controller {
 					'methods'             => WP_REST_Server::CREATABLE,
 					'callback'            => array( $this, 'save_block' ),
 					'permission_callback' => array( $this, 'check_write_permissions' ),
-					'args'                => array(
-						'block_definition' => array(
-							'type'                 => 'object',
-							'required'             => true,
-							'description'          => 'The complete JSON block definition.',
-							'properties'           => array(),
-							'additionalProperties' => true,
-						),
-					),
+					// No `args` schema: the request body IS the block definition
+					// (see save_block()) and its shape is validated exhaustively by
+					// AI_Block_Store::normalize_and_validate(), not here — declaring
+					// a required wrapper param here previously caused WordPress to
+					// 400 the request during arg validation, before save_block() (or
+					// even normalize_and_validate()) ever ran.
 				),
 			)
 		);
@@ -477,7 +474,21 @@ PROMPT;
 	 * @return WP_REST_Response|WP_Error
 	 */
 	public function save_block( WP_REST_Request $request ) {
-		$def = $request->get_param( 'block_definition' );
+		// The request body IS the block definition (current client convention).
+		// A `block_definition` wrapper key is also accepted for backward/forward
+		// compatibility with any caller still using the older shape -- checked
+		// first and explicitly, since an object that merely CONTAINS a
+		// `block_definition` key is not itself empty and would otherwise be
+		// mistaken for the definition (with every real field silently missing).
+		$body = $request->get_json_params();
+		if ( is_array( $body ) && isset( $body['block_definition'] ) && is_array( $body['block_definition'] ) ) {
+			$def = $body['block_definition'];
+		} elseif ( is_array( $request->get_param( 'block_definition' ) ) ) {
+			$def = $request->get_param( 'block_definition' );
+		} else {
+			$def = $body;
+		}
+
 		if ( empty( $def ) || ! is_array( $def ) ) {
 			return new WP_Error( 'invalid_data', __( 'Invalid block definition.', 'ai-block-creator' ), array( 'status' => 400 ) );
 		}
