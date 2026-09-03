@@ -261,19 +261,42 @@ export default function AIBlockCreatorModal( {
 		}
 	};
 
-	const handleInsertIntoPost = () => {
+	const handleInsertIntoPost = async () => {
 		if ( ! currentBlock ) {
 			return;
+		}
+
+		// If the block hasn't been saved to the library yet, save it so it's persisted.
+		if ( ! currentBlock.id && canManageLibrary ) {
+			setIsSaving( true );
+			try {
+				const saved = await apiFetch( {
+					path: '/ai-block-creator/v1/blocks',
+					method: 'POST',
+					data: currentBlock,
+				} );
+				registerDynamicAiBlock( saved );
+				setCurrentBlock( saved );
+				notifyLibraryUpdated();
+			} catch ( err ) {
+				// Ignore save error on insert
+			} finally {
+				setIsSaving( false );
+			}
 		}
 
 		const blockName = currentBlock.name.startsWith( 'ai-block/' )
 			? currentBlock.name
 			: `ai-block/${ currentBlock.name }`;
 
-		const newBlockInstance = createBlock(
-			blockName,
-			currentBlock.attributes || {}
-		);
+		const initialAttrs = {};
+		if ( currentBlock.attributes ) {
+			Object.keys( currentBlock.attributes ).forEach( ( k ) => {
+				initialAttrs[ k ] = currentBlock.attributes[ k ]?.default ?? '';
+			} );
+		}
+
+		const newBlockInstance = createBlock( blockName, initialAttrs );
 
 		if ( placeholderClientId ) {
 			replaceBlocks( placeholderClientId, newBlockInstance );
@@ -281,7 +304,7 @@ export default function AIBlockCreatorModal( {
 			insertBlocks( newBlockInstance );
 		}
 
-		onClose();
+		handleClose();
 	};
 
 	const generateButtonLabel = currentBlock
@@ -314,224 +337,238 @@ export default function AIBlockCreatorModal( {
 			isFullScreen={ false }
 		>
 			<div className="ai-block-creator-container">
-				{ ! hasConnectedLlm && (
-					<Notice status="warning" isDismissible={ false }>
-						{ __(
-							'No AI provider is currently configured for this site. Ask an administrator to connect one in Settings before generating blocks.',
-							'ai-block-creator'
-						) }
-					</Notice>
-				) }
+				<div className="ai-modal-scrollable-content">
+					{ ! hasConnectedLlm && (
+						<Notice status="warning" isDismissible={ false }>
+							{ __(
+								'No AI provider is currently configured for this site. Ask an administrator to connect one in Settings before generating blocks.',
+								'ai-block-creator'
+							) }
+						</Notice>
+					) }
 
-				{ ! canManageLibrary && (
-					<Notice status="info" isDismissible={ false }>
-						{ __(
-							'You can generate and preview blocks, but saving them to the library requires additional permissions. Ask an administrator to save this block for you.',
-							'ai-block-creator'
-						) }
-					</Notice>
-				) }
+					{ ! canManageLibrary && (
+						<Notice status="info" isDismissible={ false }>
+							{ __(
+								'You can generate and preview blocks, but saving them to the library requires additional permissions. Ask an administrator to save this block for you.',
+								'ai-block-creator'
+							) }
+						</Notice>
+					) }
 
-				{ error && (
-					<Notice
-						status="error"
-						isDismissible={ false }
-						className="ai-error-notice"
-					>
-						{ error }
-					</Notice>
-				) }
+					{ error && (
+						<Notice
+							status="error"
+							isDismissible={ false }
+							className="ai-error-notice"
+						>
+							{ error }
+						</Notice>
+					) }
 
-				{ saveSuccess && (
-					<Notice
-						status="success"
-						isDismissible={ true }
-						onDismiss={ () => setSaveSuccess( false ) }
-					>
-						{ __(
-							'Custom block successfully saved to library! It is now available in your block inserter.',
-							'ai-block-creator'
-						) }
-					</Notice>
-				) }
+					{ saveSuccess && (
+						<Notice
+							status="success"
+							isDismissible={ true }
+							onDismiss={ () => setSaveSuccess( false ) }
+						>
+							{ __(
+								'Custom block successfully saved to library! It is now available in your block inserter.',
+								'ai-block-creator'
+							) }
+						</Notice>
+					) }
 
-				{ /* Conversation history view if multiple turns */ }
-				{ conversation.length > 0 && (
-					<div className="ai-conversation-thread">
-						{ conversation.map( ( msg, idx ) => (
-							<div
-								key={ idx }
-								className={ `ai-chat-bubble is-${ msg.role }` }
-							>
-								<span className="ai-chat-role">
-									{ msg.role === 'user'
-										? __( 'You', 'ai-block-creator' )
-										: __(
-												'AI Assistant',
-												'ai-block-creator'
-										  ) }
-								</span>
-								<p className="ai-chat-text">{ msg.content }</p>
-							</div>
-						) ) }
-					</div>
-				) }
-
-				{ /* Main Content Area */ }
-				<div className="ai-modal-body-grid">
-					{ /* Left / Input Column */ }
-					<div className="ai-prompt-column">
-						{ ! currentBlock && (
-							<div className="ai-suggestions-section">
-								<span className="ai-section-label">
-									{ __( 'Quick Ideas:', 'ai-block-creator' ) }
-								</span>
-								<div className="ai-suggestions-list">
-									{ SUGGESTIONS.map( ( item, i ) => (
-										<button
-											key={ i }
-											type="button"
-											className="ai-suggestion-pill"
-											onClick={ () => {
-												setPrompt( item.prompt );
-												handleGenerate( item.prompt );
-											} }
-											disabled={
-												isGenerating ||
-												! hasConnectedLlm
-											}
-										>
-											{ item.label }
-										</button>
-									) ) }
+					{ /* Conversation history view if multiple turns */ }
+					{ conversation.length > 0 && (
+						<div className="ai-conversation-thread">
+							{ conversation.map( ( msg, idx ) => (
+								<div
+									key={ idx }
+									className={ `ai-chat-bubble is-${ msg.role }` }
+								>
+									<span className="ai-chat-role">
+										{ msg.role === 'user'
+											? __( 'You', 'ai-block-creator' )
+											: __(
+													'AI Assistant',
+													'ai-block-creator'
+											  ) }
+									</span>
+									<p className="ai-chat-text">
+										{ msg.content }
+									</p>
 								</div>
-							</div>
-						) }
+							) ) }
+						</div>
+					) }
 
-						<div className="ai-input-card">
-							<TextareaControl
-								label={
-									currentBlock
-										? '💬 ' +
-										  __(
-												'Refine your block:',
-												'ai-block-creator'
-										  )
-										: '📝 ' +
-										  __(
-												'Describe the block you want to create:',
-												'ai-block-creator'
-										  )
-								}
-								value={ prompt }
-								onChange={ setPrompt }
-								placeholder={
-									currentBlock
-										? __(
-												'e.g. "Add a price badge", "Make the button blue with gradient", "Add dark background"…',
-												'ai-block-creator'
-										  )
-										: __(
-												'e.g. "Create a pricing comparison table with 3 plans and a featured badge"…',
-												'ai-block-creator'
-										  )
-								}
-								rows={ 4 }
-								disabled={ isGenerating || ! hasConnectedLlm }
-								className="ai-main-textarea"
-							/>
+					{ /* Main Content Area */ }
+					<div className="ai-modal-body-grid">
+						{ /* Left / Input Column */ }
+						<div className="ai-prompt-column">
+							{ ! currentBlock && (
+								<div className="ai-suggestions-section">
+									<span className="ai-section-label">
+										{ __(
+											'Quick Ideas:',
+											'ai-block-creator'
+										) }
+									</span>
+									<div className="ai-suggestions-list">
+										{ SUGGESTIONS.map( ( item, i ) => (
+											<button
+												key={ i }
+												type="button"
+												className="ai-suggestion-pill"
+												onClick={ () => {
+													setPrompt( item.prompt );
+													handleGenerate(
+														item.prompt
+													);
+												} }
+												disabled={
+													isGenerating ||
+													! hasConnectedLlm
+												}
+											>
+												{ item.label }
+											</button>
+										) ) }
+									</div>
+								</div>
+							) }
 
-							<div className="ai-input-actions-bar">
-								<div className="ai-multimodal-tools">
-									<VoiceInput
-										onTranscript={ handleVoiceTranscript }
-										disabled={
-											isGenerating || ! hasConnectedLlm
-										}
-									/>
-									{ supportsImageInput && (
-										<ImageDropzone
-											image={ screenshot }
-											onImageChange={ setScreenshot }
+							<div className="ai-input-card">
+								<TextareaControl
+									label={
+										currentBlock
+											? '💬 ' +
+											  __(
+													'Refine your block:',
+													'ai-block-creator'
+											  )
+											: '📝 ' +
+											  __(
+													'Describe the block you want to create:',
+													'ai-block-creator'
+											  )
+									}
+									value={ prompt }
+									onChange={ setPrompt }
+									placeholder={
+										currentBlock
+											? __(
+													'e.g. "Add a price badge", "Make the button blue with gradient", "Add dark background"…',
+													'ai-block-creator'
+											  )
+											: __(
+													'e.g. "Create a pricing comparison table with 3 plans and a featured badge"…',
+													'ai-block-creator'
+											  )
+									}
+									rows={ 4 }
+									disabled={
+										isGenerating || ! hasConnectedLlm
+									}
+									className="ai-main-textarea"
+								/>
+
+								<div className="ai-input-actions-bar">
+									<div className="ai-multimodal-tools">
+										<VoiceInput
+											onTranscript={
+												handleVoiceTranscript
+											}
 											disabled={
 												isGenerating ||
 												! hasConnectedLlm
 											}
 										/>
+										{ supportsImageInput && (
+											<ImageDropzone
+												image={ screenshot }
+												onImageChange={ setScreenshot }
+												disabled={
+													isGenerating ||
+													! hasConnectedLlm
+												}
+											/>
+										) }
+									</div>
+
+									<Button
+										variant="primary"
+										onClick={ () => handleGenerate() }
+										disabled={
+											isGenerating ||
+											! hasConnectedLlm ||
+											( ! prompt && ! screenshot )
+										}
+										className="ai-generate-submit-btn"
+									>
+										{ isGenerating ? (
+											<>
+												<Spinner />
+												<span>
+													{ __(
+														'Generating…',
+														'ai-block-creator'
+													) }
+												</span>
+											</>
+										) : (
+											generateButtonLabel
+										) }
+									</Button>
+								</div>
+							</div>
+
+							{ currentBlock && (
+								<div className="ai-refine-tips">
+									💡{ ' ' }
+									<strong>
+										{ __( 'Tip:', 'ai-block-creator' ) }
+									</strong>{ ' ' }
+									{ __(
+										'Type follow-up instructions to refine styles, add attributes, or tweak layout without losing your current progress.',
+										'ai-block-creator'
 									) }
 								</div>
-
-								<Button
-									variant="primary"
-									onClick={ () => handleGenerate() }
-									disabled={
-										isGenerating ||
-										! hasConnectedLlm ||
-										( ! prompt && ! screenshot )
-									}
-									className="ai-generate-submit-btn"
-								>
-									{ isGenerating ? (
-										<>
-											<Spinner />
-											<span>
-												{ __(
-													'Generating…',
-													'ai-block-creator'
-												) }
-											</span>
-										</>
-									) : (
-										generateButtonLabel
-									) }
-								</Button>
-							</div>
+							) }
 						</div>
 
-						{ currentBlock && (
-							<div className="ai-refine-tips">
-								💡{ ' ' }
-								<strong>
-									{ __( 'Tip:', 'ai-block-creator' ) }
-								</strong>{ ' ' }
-								{ __(
-									'Type follow-up instructions to refine styles, add attributes, or tweak layout without losing your current progress.',
-									'ai-block-creator'
-								) }
-							</div>
-						) }
-					</div>
-
-					{ /* Right / Preview Column */ }
-					<div className="ai-preview-column">
-						{ currentBlock ? (
-							<BlockPreview blockDef={ currentBlock } />
-						) : (
-							<div className="ai-preview-placeholder">
-								<div className="ai-placeholder-content">
-									<span className="ai-placeholder-icon">
-										🎨
-									</span>
-									<h4>
-										{ __(
-											'Live Block Preview',
-											'ai-block-creator'
-										) }
-									</h4>
-									<p>
-										{ supportsImageInput
-											? __(
-													'Type a description, dictate with your microphone, or paste a screenshot to watch your custom block come to life here.',
-													'ai-block-creator'
-											  )
-											: __(
-													'Type a description or dictate with your microphone to watch your custom block come to life here.',
-													'ai-block-creator'
-											  ) }
-									</p>
+						{ /* Right / Preview Column */ }
+						<div className="ai-preview-column">
+							{ currentBlock ? (
+								<BlockPreview blockDef={ currentBlock } />
+							) : (
+								<div className="ai-preview-placeholder">
+									<div className="ai-placeholder-content">
+										<span className="ai-placeholder-icon">
+											🎨
+										</span>
+										<h4>
+											{ __(
+												'Live Block Preview',
+												'ai-block-creator'
+											) }
+										</h4>
+										<p>
+											{ supportsImageInput
+												? __(
+														'Type a description, dictate with your microphone, or paste a screenshot to watch your custom block come to life here.',
+														'ai-block-creator'
+												  )
+												: __(
+														'Type a description or dictate with your microphone to watch your custom block come to life here.',
+														'ai-block-creator'
+												  ) }
+										</p>
+									</div>
 								</div>
-							</div>
-						) }
+							) }
+						</div>
 					</div>
 				</div>
 
