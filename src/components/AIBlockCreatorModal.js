@@ -61,6 +61,7 @@ export default function AIBlockCreatorModal( {
 	onClose,
 	placeholderClientId,
 	initialBlock,
+	initialPrompt,
 } ) {
 	const [ prompt, setPrompt ] = useState( INITIAL_STATE.prompt );
 	const [ screenshot, setScreenshot ] = useState( INITIAL_STATE.screenshot );
@@ -81,26 +82,28 @@ export default function AIBlockCreatorModal( {
 		useDispatch( 'core/block-editor' );
 
 	// Seed the modal with a block loaded from the library (see
-	// BlockLibrarySidebar's "Refine" action) on the isOpen false→true
-	// transition only — not on every initialBlock reference change while
-	// the modal stays open, which would clobber whatever the user is
-	// mid-way through editing.
+	// BlockLibrarySidebar's "Refine" action) or a prompt passed from the inserter.
 	useEffect( () => {
-		if ( isOpen && initialBlock ) {
-			setCurrentBlock( initialBlock );
-			setConversation( [
-				{
-					role: 'assistant',
-					content: sprintf(
-						// translators: %s: block title.
-						__(
-							'Loaded "%s" from your library. Describe changes to refine it, or use the buttons below to reinsert or resave it as-is.',
-							'ai-block-creator'
+		if ( isOpen ) {
+			if ( initialPrompt ) {
+				setPrompt( initialPrompt );
+			}
+			if ( initialBlock ) {
+				setCurrentBlock( initialBlock );
+				setConversation( [
+					{
+						role: 'assistant',
+						content: sprintf(
+							// translators: %s: block title.
+							__(
+								'Loaded "%s" from your library. Describe changes to refine it, or use the buttons below to reinsert or resave it as-is.',
+								'ai-block-creator'
+							),
+							initialBlock.title || initialBlock.name
 						),
-						initialBlock.title || initialBlock.name
-					),
-				},
-			] );
+					},
+				] );
+			}
 		}
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [ isOpen ] );

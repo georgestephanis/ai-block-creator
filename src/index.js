@@ -34,88 +34,25 @@ if ( Array.isArray( settings.savedBlocks ) ) {
 	} );
 }
 
-/**
- * Injects (and keeps injected) a header toolbar button that opens the
- * creator modal. Uses a MutationObserver instead of polling so it survives
- * header re-renders (fullscreen toggle, switching to template-editing mode)
- * for the life of the editor session, not just an initial 5-second window.
- *
- * @param {Function} onOpen Called when the button is clicked.
- * @return {Function} Cleanup function.
- */
-function watchForHeaderToolbar( onOpen ) {
-	const BUTTON_ID = 'ai-block-creator-header-btn';
-
-	const insertButton = () => {
-		if ( document.getElementById( BUTTON_ID ) ) {
-			return;
-		}
-
-		// Find the inserter toggle button ('+') in the document tools toolbar.
-		const inserterBtn = document.querySelector(
-			'.editor-document-tools__inserter-toggle, .edit-post-header-toolbar__inserter-toggle, button[aria-label="Block Inserter"], button[aria-label="Toggle block inserter"]'
-		);
-
-		// Fallback to undo button or the toolbar container.
-		const undoBtn = document.querySelector(
-			'.editor-history__undo, .edit-post-header-toolbar__undo, button[aria-label="Undo"]'
-		);
-		const headerToolbar = document.querySelector(
-			'.editor-document-tools, .edit-post-header-toolbar, .editor-header__toolbar'
-		);
-
-		if ( ! inserterBtn && ! undoBtn && ! headerToolbar ) {
-			return;
-		}
-
-		const btnContainer = document.createElement( 'div' );
-		btnContainer.id = BUTTON_ID;
-		btnContainer.className = 'ai-header-btn-wrap';
-
-		const btn = document.createElement( 'button' );
-		btn.type = 'button';
-		btn.className =
-			'components-button ai-sparkle-toolbar-btn has-text has-icon';
-		btn.innerHTML =
-			'<span class="ai-btn-icon">✨</span><span class="ai-btn-label">' +
-			__( 'Create Block with AI', 'ai-block-creator' ) +
-			'</span>';
-		btn.title = __(
-			'Speak, type, or screenshot a custom block into existence',
-			'ai-block-creator'
-		);
-		btn.onclick = onOpen;
-
-		btnContainer.appendChild( btn );
-
-		if ( inserterBtn && inserterBtn.parentElement ) {
-			inserterBtn.insertAdjacentElement( 'afterend', btnContainer );
-		} else if ( undoBtn && undoBtn.parentElement ) {
-			undoBtn.parentElement.insertBefore( btnContainer, undoBtn );
-		} else if ( headerToolbar ) {
-			headerToolbar.appendChild( btnContainer );
-		}
-	};
-
-	insertButton();
-
-	const observer = new window.MutationObserver( insertButton );
-	observer.observe( document.body, { childList: true, subtree: true } );
-
-	return () => observer.disconnect();
-}
+import { watchForInserterTabs } from './inserter-tab-controller';
 
 /**
- * Top Toolbar Sparkle Button & Main Controller Component.
+ * Main Controller Component.
  */
 function AIBlockCreatorApp() {
 	const [ isModalOpen, setIsModalOpen ] = useState( false );
 	const [ placeholderClientId, setPlaceholderClientId ] = useState( null );
 	const [ initialBlock, setInitialBlock ] = useState( null );
+	const [ initialPrompt, setInitialPrompt ] = useState( '' );
 
-	const openModal = ( { clientId = null, block = null } = {} ) => {
+	const openModal = ( {
+		clientId = null,
+		block = null,
+		prompt = '',
+	} = {} ) => {
 		setPlaceholderClientId( clientId );
 		setInitialBlock( block );
+		setInitialPrompt( prompt );
 		setIsModalOpen( true );
 	};
 
@@ -124,17 +61,19 @@ function AIBlockCreatorApp() {
 	// replace it in place instead of appending at the end of the post.
 	useEffect( () => {
 		const handleOpenEvent = ( event ) => {
-			openModal( { clientId: event.detail?.clientId ?? null } );
+			openModal( {
+				clientId: event.detail?.clientId ?? null,
+				prompt: event.detail?.prompt ?? '',
+			} );
 		};
 		window.addEventListener( OPEN_EVENT, handleOpenEvent );
 		return () => window.removeEventListener( OPEN_EVENT, handleOpenEvent );
-		// eslint-disable-next-line react-hooks/exhaustive-deps -- openModal
-		// is redefined every render but doesn't close over anything that
-		// changes in a way this listener needs to react to.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [] );
 
+	// Hook into Gutenberg's Block Inserter "+" tablist to add the "AI Blocks" tab.
 	useEffect( () => {
-		return watchForHeaderToolbar( () => openModal() );
+		return watchForInserterTabs( ( opts ) => openModal( opts ) );
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [] );
 
@@ -155,10 +94,12 @@ function AIBlockCreatorApp() {
 				isOpen={ isModalOpen }
 				placeholderClientId={ placeholderClientId }
 				initialBlock={ initialBlock }
+				initialPrompt={ initialPrompt }
 				onClose={ () => {
 					setIsModalOpen( false );
 					setPlaceholderClientId( null );
 					setInitialBlock( null );
+					setInitialPrompt( '' );
 				} }
 			/>
 		</>
