@@ -208,6 +208,11 @@ class AI_Block_REST_Controller extends WP_REST_Controller {
 			$user_content .= "\n\nCurrent Block Definition to Refine/Update:\n" . wp_json_encode( $current_block, JSON_PRETTY_PRINT );
 		}
 
+		$timeout          = (float) apply_filters( 'ai_block_creator_request_timeout', 300.0 );
+		$timeout_callback = static fn() => $timeout;
+		add_filter( 'wp_ai_client_default_request_timeout', $timeout_callback, 999 );
+		add_filter( 'http_request_timeout', $timeout_callback, 999 );
+
 		try {
 			/**
 			 * Filters the ModelConfig custom options passed to the AI client.
@@ -289,6 +294,9 @@ class AI_Block_REST_Controller extends WP_REST_Controller {
 			);
 		} catch ( \Throwable $e ) {
 			return new WP_Error( 'generation_failed', $e->getMessage(), array( 'status' => 500 ) );
+		} finally {
+			remove_filter( 'wp_ai_client_default_request_timeout', $timeout_callback, 999 );
+			remove_filter( 'http_request_timeout', $timeout_callback, 999 );
 		}
 	}
 
