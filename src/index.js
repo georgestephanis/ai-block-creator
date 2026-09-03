@@ -47,11 +47,24 @@ function watchForHeaderToolbar( onOpen ) {
 	const BUTTON_ID = 'ai-block-creator-header-btn';
 
 	const insertButton = () => {
-		const headerToolbar = document.querySelector(
-			'.edit-post-header-toolbar, .editor-header__toolbar, .interface-interface-skeleton__header'
+		if ( document.getElementById( BUTTON_ID ) ) {
+			return;
+		}
+
+		// Find the inserter toggle button ('+') in the document tools toolbar.
+		const inserterBtn = document.querySelector(
+			'.editor-document-tools__inserter-toggle, .edit-post-header-toolbar__inserter-toggle, button[aria-label="Block Inserter"], button[aria-label="Toggle block inserter"]'
 		);
 
-		if ( ! headerToolbar || document.getElementById( BUTTON_ID ) ) {
+		// Fallback to undo button or the toolbar container.
+		const undoBtn = document.querySelector(
+			'.editor-history__undo, .edit-post-header-toolbar__undo, button[aria-label="Undo"]'
+		);
+		const headerToolbar = document.querySelector(
+			'.editor-document-tools, .edit-post-header-toolbar, .editor-header__toolbar'
+		);
+
+		if ( ! inserterBtn && ! undoBtn && ! headerToolbar ) {
 			return;
 		}
 
@@ -74,7 +87,14 @@ function watchForHeaderToolbar( onOpen ) {
 		btn.onclick = onOpen;
 
 		btnContainer.appendChild( btn );
-		headerToolbar.appendChild( btnContainer );
+
+		if ( inserterBtn && inserterBtn.parentElement ) {
+			inserterBtn.insertAdjacentElement( 'afterend', btnContainer );
+		} else if ( undoBtn && undoBtn.parentElement ) {
+			undoBtn.parentElement.insertBefore( btnContainer, undoBtn );
+		} else if ( headerToolbar ) {
+			headerToolbar.appendChild( btnContainer );
+		}
 	};
 
 	insertButton();

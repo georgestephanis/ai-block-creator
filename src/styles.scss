@@ -18,32 +18,41 @@ $ai-accent-darker-20: var(--wp-admin-theme-color-darker-20, #3730a3);
 .ai-header-btn-wrap {
 	display: inline-flex;
 	align-items: center;
-	margin-left: 8px;
+	margin: 0 4px;
+	height: 100%;
 }
 
 .ai-sparkle-toolbar-btn {
 	background: linear-gradient(135deg, #{$ai-accent} 0%, #{$ai-accent-darker-10} 100%) !important;
 	color: #fff !important;
 	border: none !important;
-	border-radius: 6px !important;
-	padding: 4px 12px !important;
+	border-radius: 4px !important;
+	padding: 0 10px !important;
+	height: 32px !important;
+	min-height: 32px !important;
 	font-weight: 500 !important;
-	font-size: 13px !important;
+	font-size: 12px !important;
 	display: inline-flex !important;
 	align-items: center !important;
-	gap: 6px !important;
-	box-shadow: 0 2px 4px rgba(var(--wp-admin-theme-color--rgb, 79, 70, 229), 0.2) !important;
+	gap: 5px !important;
+	box-shadow: 0 1px 3px rgba(var(--wp-admin-theme-color--rgb, 79, 70, 229), 0.25) !important;
 	transition: all 0.2s ease-in-out !important;
 	cursor: pointer;
+	white-space: nowrap !important;
 
 	&:hover {
 		background: linear-gradient(135deg, #{$ai-accent-darker-10} 0%, #{$ai-accent-darker-20} 100%) !important;
 		transform: translateY(-1px);
-		box-shadow: 0 4px 8px rgba(var(--wp-admin-theme-color--rgb, 79, 70, 229), 0.3) !important;
+		box-shadow: 0 2px 6px rgba(var(--wp-admin-theme-color--rgb, 79, 70, 229), 0.35) !important;
 	}
 
 	.ai-btn-icon {
-		font-size: 14px;
+		font-size: 13px;
+		line-height: 1;
+	}
+
+	.ai-btn-label {
+		line-height: 1;
 	}
 }
 
