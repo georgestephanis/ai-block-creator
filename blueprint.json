@@ -1,0 +1,39 @@
+{
+	"$schema": "https://playground.wordpress.net/blueprint-schema.json",
+	"meta": {
+		"title": "AI Block Creator",
+		"description": "Speak, type, or screenshot custom Gutenberg blocks into existence directly inside the editor.",
+		"author": "georgestephanis"
+	},
+	"preferredVersions": {
+		"php": "8.3",
+		"wp": "latest"
+	},
+	"features": {
+		"networking": true
+	},
+	"login": true,
+	"landingPage": "/wp-admin/post-new.php",
+	"steps": [
+		{
+			"step": "installPlugin",
+			"pluginData": {
+				"resource": "wordpress.org/plugins",
+				"slug": "ai-provider-for-openai-compatible-servers"
+			},
+			"options": {
+				"activate": true
+			}
+		},
+		{
+			"step": "installPlugin",
+			"pluginData": {
+				"resource": "git:directory",
+				"directory": "."
+			},
+			"options": {
+				"activate": true
+			}
+		}
+	]
+}
