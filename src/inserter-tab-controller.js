@@ -69,26 +69,6 @@ function renderTabContent( container, onOpenModal ) {
 }
 
 /**
- * Shifts Gutenberg's native animated underline indicator to the target tab.
- *
- * @param {HTMLElement} tablist   The tablist element.
- * @param {HTMLElement} targetTab The tab button to align the indicator with.
- */
-function updateTablistIndicator( tablist, targetTab ) {
-	if ( ! tablist || ! targetTab ) {
-		return;
-	}
-	const tablistRect = tablist.getBoundingClientRect();
-	const tabRect = targetTab.getBoundingClientRect();
-	if ( tabRect.width > 0 ) {
-		const left = tabRect.left - tablistRect.left + tablist.scrollLeft;
-		const width = tabRect.width;
-		tablist.style.setProperty( '--active-tab-left', `${ left }px` );
-		tablist.style.setProperty( '--active-tab-width', `${ width }px` );
-	}
-}
-
-/**
  * Activates the AI tab and displays the AI panel overlay.
  *
  * @param {HTMLElement} tablist        The tablist element containing all tab buttons.
@@ -99,6 +79,7 @@ function updateTablistIndicator( tablist, targetTab ) {
 function activateAiTab( tablist, aiTabBtn, panelContainer, onOpenModal ) {
 	isAiTabActive = true;
 
+	tablist.classList.add( 'has-ai-tab-active' );
 	aiTabBtn.setAttribute( 'aria-selected', 'true' );
 	aiTabBtn.setAttribute( 'data-active', 'true' );
 	aiTabBtn.classList.add( 'is-active', 'components-tab-panel__tab-active' );
@@ -111,12 +92,6 @@ function activateAiTab( tablist, aiTabBtn, panelContainer, onOpenModal ) {
 		tab.setAttribute( 'aria-selected', 'false' );
 		tab.removeAttribute( 'data-active' );
 		tab.classList.remove( 'is-active', 'components-tab-panel__tab-active' );
-	} );
-
-	// Shift the native animated underline indicator to the AI tab.
-	updateTablistIndicator( tablist, aiTabBtn );
-	window.requestAnimationFrame( () => {
-		updateTablistIndicator( tablist, aiTabBtn );
 	} );
 
 	// Display the AI panel container overlay.
@@ -136,6 +111,10 @@ function deactivateAiTab( tablist, aiTabBtn, panelContainer ) {
 		return;
 	}
 	isAiTabActive = false;
+
+	if ( tablist ) {
+		tablist.classList.remove( 'has-ai-tab-active' );
+	}
 
 	if ( aiTabBtn ) {
 		aiTabBtn.setAttribute( 'aria-selected', 'false' );
