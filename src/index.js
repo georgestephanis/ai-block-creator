@@ -34,7 +34,7 @@ if ( Array.isArray( settings.savedBlocks ) ) {
 	} );
 }
 
-import { watchForInserterTabs } from './inserter-tab-controller';
+import { watchForInserterCard } from './inserter-card-controller';
 
 /**
  * Main Controller Component.
@@ -71,9 +71,9 @@ function AIBlockCreatorApp() {
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [] );
 
-	// Hook into Gutenberg's Block Inserter "+" tablist to add the "AI Blocks" tab.
+	// Mount the featured AI Create card in the native Block Inserter.
 	useEffect( () => {
-		return watchForInserterTabs( ( opts ) => openModal( opts ) );
+		return watchForInserterCard( ( opts ) => openModal( opts ) );
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [] );
 
@@ -87,6 +87,7 @@ function AIBlockCreatorApp() {
 			</PluginMoreMenuItem>
 
 			<BlockLibrarySidebar
+				onLaunchModal={ ( opts ) => openModal( opts ) }
 				onRefine={ ( block ) => openModal( { block } ) }
 			/>
 
