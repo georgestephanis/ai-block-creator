@@ -5,7 +5,13 @@
   "main": "build/index.js",
   "scripts": {
     "build": "wp-scripts build",
-    "start": "wp-scripts start"
+    "start": "wp-scripts start",
+    "lint-js": "wp-scripts lint-js src",
+    "lint-js:fix": "wp-scripts lint-js src --fix",
+    "lint-css": "wp-scripts lint-style src/**/*.scss",
+    "lint-css:fix": "wp-scripts lint-style src/**/*.scss --fix",
+    "format": "wp-scripts format src",
+    "test": "npm run lint-js && npm run lint-css"
   },
   "keywords": [
     "wordpress",
@@ -19,6 +25,11 @@
     "@wordpress/scripts": "^30.0.0"
   },
   "dependencies": {
+    "@wordpress/escape-html": "^3.0.0",
+    "@wordpress/i18n": "^6.0.0",
     "@wordpress/icons": "^15.5.0"
+  },
+  "overrides": {
+    "typescript": "5.6.3"
   }
 }

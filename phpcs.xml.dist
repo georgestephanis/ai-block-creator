@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<ruleset name="AI Block Creator">
+    <description>Coding standards for the AI Block Creator plugin.</description>
+
+    <file>.</file>
+    <exclude-pattern>/vendor/*</exclude-pattern>
+    <exclude-pattern>/node_modules/*</exclude-pattern>
+    <exclude-pattern>/build/*</exclude-pattern>
+    <exclude-pattern>/tests/*</exclude-pattern>
+
+    <arg value="sp"/>
+    <arg name="colors"/>
+    <arg name="extensions" value="php"/>
+
+    <config name="minimum_supported_wp_version" value="7.0"/>
+    <config name="testVersion" value="7.4-"/>
+
+    <rule ref="WordPress-Extra"/>
+    <rule ref="WordPress-Docs"/>
+    <rule ref="PHPCompatibilityWP"/>
+
+    <rule ref="WordPress.NamingConventions.PrefixAllGlobals">
+        <properties>
+            <property name="prefixes" type="array">
+                <element value="AI_Block_Creator"/>
+                <element value="ai_block_creator"/>
+            </property>
+        </properties>
+    </rule>
+</ruleset>
