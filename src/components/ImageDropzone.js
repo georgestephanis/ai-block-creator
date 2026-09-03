@@ -11,6 +11,9 @@ const ALLOWED_TYPES = [ 'image/png', 'image/jpeg', 'image/webp', 'image/gif' ];
 const MAX_BYTES = 4 * 1024 * 1024; // Mirrors the server-side cap in AI_Block_REST_Controller.
 
 export default function ImageDropzone( { image, onImageChange, disabled } ) {
+	const settings = window.aiBlockCreatorSettings || {};
+	const supportsImageInput = Boolean( settings.supportsImageInput );
+
 	const [ isDragging, setIsDragging ] = useState( false );
 	const [ error, setError ] = useState( '' );
 	const fileInputRef = useRef( null );
@@ -52,10 +55,10 @@ export default function ImageDropzone( { image, onImageChange, disabled } ) {
 
 	// Listen for paste event anywhere inside modal or window.
 	useEffect( () => {
+		if ( ! supportsImageInput || disabled ) {
+			return;
+		}
 		const handlePaste = ( event ) => {
-			if ( disabled ) {
-				return;
-			}
 			const items = event.clipboardData?.items;
 			if ( ! items ) {
 				return;
@@ -75,12 +78,12 @@ export default function ImageDropzone( { image, onImageChange, disabled } ) {
 
 		window.addEventListener( 'paste', handlePaste );
 		return () => window.removeEventListener( 'paste', handlePaste );
-	}, [ disabled, processFile ] );
+	}, [ disabled, processFile, supportsImageInput ] );
 
 	const handleDrop = ( e ) => {
 		e.preventDefault();
 		setIsDragging( false );
-		if ( disabled ) {
+		if ( disabled || ! supportsImageInput ) {
 			return;
 		}
 
@@ -91,7 +94,7 @@ export default function ImageDropzone( { image, onImageChange, disabled } ) {
 
 	const handleDragOver = ( e ) => {
 		e.preventDefault();
-		if ( ! disabled ) {
+		if ( ! disabled && supportsImageInput ) {
 			setIsDragging( true );
 		}
 	};
@@ -99,6 +102,10 @@ export default function ImageDropzone( { image, onImageChange, disabled } ) {
 	const handleDragLeave = () => {
 		setIsDragging( false );
 	};
+
+	if ( ! supportsImageInput ) {
+		return null;
+	}
 
 	if ( image ) {
 		return (

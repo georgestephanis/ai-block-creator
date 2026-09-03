@@ -45,6 +45,8 @@ function AIBlockCreatorApp() {
 	const [ initialBlock, setInitialBlock ] = useState( null );
 	const [ initialPrompt, setInitialPrompt ] = useState( '' );
 
+	const hasConnectedLlm = settings.hasConnectedLlm !== false;
+
 	const openModal = ( {
 		clientId = null,
 		block = null,
@@ -71,11 +73,19 @@ function AIBlockCreatorApp() {
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [] );
 
-	// Mount the featured AI Create card in the native Block Inserter.
+	// Mount the featured AI Create card in the native Block Inserter (only if LLM connected).
 	useEffect( () => {
+		if ( ! hasConnectedLlm ) {
+			return;
+		}
 		return watchForInserterCard( ( opts ) => openModal( opts ) );
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [] );
+	}, [ hasConnectedLlm ] );
+
+	// If no LLM is connected, do not display the sidebar, menu item, or modal trigger.
+	if ( ! hasConnectedLlm ) {
+		return null;
+	}
 
 	return (
 		<>
@@ -113,6 +123,9 @@ registerPlugin( 'ai-block-creator', {
 	icon: 'star-filled',
 } );
 
+const hasLlm = settings.hasConnectedLlm !== false;
+const hasVision = Boolean( settings.supportsImageInput );
+
 /**
  * Register a quick inserter block: "ai-block/generator"
  * When inserted via "/" search ("ai block", "custom block", "generator"), it opens the modal!
@@ -122,10 +135,15 @@ registerBlockType( 'ai-block/generator', {
 	title: __( 'Create Block with AI', 'ai-block-creator' ),
 	category: 'ai-blocks',
 	icon: 'star-filled',
-	description: __(
-		'Speak, type, or paste a screenshot to create a new custom block on the fly.',
-		'ai-block-creator'
-	),
+	description: hasVision
+		? __(
+				'Speak, type, or paste a screenshot to create a new custom block on the fly.',
+				'ai-block-creator'
+		  )
+		: __(
+				'Speak or type to create a new custom block on the fly.',
+				'ai-block-creator'
+		  ),
 	keywords: [
 		__( 'ai', 'ai-block-creator' ),
 		__( 'generate', 'ai-block-creator' ),
@@ -135,7 +153,7 @@ registerBlockType( 'ai-block/generator', {
 		__( 'speak', 'ai-block-creator' ),
 	],
 	supports: {
-		inserter: true,
+		inserter: hasLlm,
 		html: false,
 	},
 	edit: function QuickEdit( { clientId } ) {
@@ -143,10 +161,43 @@ registerBlockType( 'ai-block/generator', {
 			window.dispatchEvent(
 				new CustomEvent( OPEN_EVENT, { detail: { clientId } } )
 			);
-			// The placeholder itself is removed/replaced once the modal
-			// produces a real block (see AIBlockCreatorModal), not here —
-			// removing it eagerly would lose the insertion point.
 		};
+
+		if ( ! hasLlm ) {
+			return (
+				<div className="ai-block-inserter-card">
+					<div className="ai-inserter-content">
+						<span className="ai-inserter-icon">⚠️</span>
+						<div className="ai-inserter-text">
+							<h4>
+								{ __(
+									'AI Provider Not Connected',
+									'ai-block-creator'
+								) }
+							</h4>
+							<p>
+								{ __(
+									'Please connect an LLM provider in Settings > Connectors to use AI Block Creator.',
+									'ai-block-creator'
+								) }
+							</p>
+						</div>
+					</div>
+					{ settings.connectorsUrl && (
+						<Button
+							variant="secondary"
+							href={ settings.connectorsUrl }
+							target="_blank"
+						>
+							{ __(
+								'Configure Connectors ↗',
+								'ai-block-creator'
+							) }
+						</Button>
+					) }
+				</div>
+			);
+		}
 
 		return (
 			<div className="ai-block-inserter-card">
@@ -157,10 +208,15 @@ registerBlockType( 'ai-block/generator', {
 							{ __( 'AI Block Creator', 'ai-block-creator' ) }
 						</h4>
 						<p>
-							{ __(
-								'Speak, type, or paste a screenshot to build your custom block right here.',
-								'ai-block-creator'
-							) }
+							{ hasVision
+								? __(
+										'Speak, type, or paste a screenshot to build your custom block right here.',
+										'ai-block-creator'
+								  )
+								: __(
+										'Speak or type to build your custom block right here.',
+										'ai-block-creator'
+								  ) }
 						</p>
 					</div>
 				</div>

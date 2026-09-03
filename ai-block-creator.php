@@ -218,6 +218,65 @@ function register_rest_routes(): void {
 add_action( 'rest_api_init', __NAMESPACE__ . '\\register_rest_routes' );
 
 /**
+ * Checks whether an active LLM provider with valid credentials is connected.
+ *
+ * @return bool True if an LLM is connected and available.
+ */
+function has_connected_llm(): bool {
+	$has_llm = false;
+
+	if ( function_exists( 'WordPress\\AI\\has_valid_ai_credentials' ) ) {
+		$has_llm = (bool) \WordPress\AI\has_valid_ai_credentials();
+	} elseif ( function_exists( 'wp_supports_ai' ) ) {
+		$has_llm = (bool) wp_supports_ai();
+	} elseif ( function_exists( 'wp_ai_client_prompt' ) ) {
+		try {
+			$builder = wp_ai_client_prompt( 'Test' );
+			$has_llm = (bool) $builder->is_supported_for_text_generation();
+		} catch ( \Throwable $t ) {
+			$has_llm = false;
+		}
+	}
+
+	/**
+	 * Filters whether an LLM provider is connected.
+	 *
+	 * @param bool $has_llm Whether an LLM is connected.
+	 */
+	return (bool) apply_filters( 'ai_block_creator_has_connected_llm', $has_llm );
+}
+
+/**
+ * Checks whether the configured LLM supports image/multimodal (vision) inputs.
+ *
+ * @return bool True if image input is supported.
+ */
+function supports_image_input(): bool {
+	if ( ! has_connected_llm() ) {
+		return false;
+	}
+
+	$supports_images = false;
+
+	if ( function_exists( 'wp_ai_client_prompt' ) ) {
+		try {
+			$builder = wp_ai_client_prompt( 'Test' );
+			$builder = $builder->withFile( 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'image/png' );
+			$supports_images = (bool) $builder->is_supported_for_text_generation();
+		} catch ( \Throwable $t ) {
+			$supports_images = false;
+		}
+	}
+
+	/**
+	 * Filters whether the configured LLM supports image inputs.
+	 *
+	 * @param bool $supports_images Whether image input is supported.
+	 */
+	return (bool) apply_filters( 'ai_block_creator_supports_image_input', $supports_images );
+}
+
+/**
  * Enqueues assets for the Block Editor.
  */
 function enqueue_editor_assets(): void {
@@ -265,10 +324,11 @@ function enqueue_editor_assets(): void {
 		'ai-block-creator-editor',
 		'var aiBlockCreatorSettings = ' . wp_json_encode(
 			array(
-				'savedBlocks'      => AI_Block_Store::all(),
-				'hasAiClient'      => function_exists( 'wp_ai_client_prompt' ),
-				'aiSupported'      => function_exists( 'wp_supports_ai' ) ? wp_supports_ai() : function_exists( 'wp_ai_client_prompt' ),
-				'canManageLibrary' => current_user_can( 'unfiltered_html' ),
+				'savedBlocks'        => AI_Block_Store::all(),
+				'hasConnectedLlm'    => has_connected_llm(),
+				'supportsImageInput' => supports_image_input(),
+				'canManageLibrary'   => current_user_can( 'unfiltered_html' ),
+				'connectorsUrl'      => admin_url( 'options-connectors.php' ),
 			)
 		) . ';',
 		'before'

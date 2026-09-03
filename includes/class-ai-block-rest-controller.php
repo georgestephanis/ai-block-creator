@@ -192,6 +192,10 @@ class AI_Block_REST_Controller extends WP_REST_Controller {
 			return new WP_Error( 'no_ai_client', __( 'WordPress AI Client is not available in this environment.', 'ai-block-creator' ), array( 'status' => 500 ) );
 		}
 
+		if ( ! empty( $image ) && function_exists( 'AI_Block_Creator\\supports_image_input' ) && ! \AI_Block_Creator\supports_image_input() ) {
+			return new WP_Error( 'image_input_not_supported', __( 'The configured AI provider does not support image inputs.', 'ai-block-creator' ), array( 'status' => 400 ) );
+		}
+
 		$validated_image = $this->validate_image_data_uri( $image );
 		if ( is_wp_error( $validated_image ) ) {
 			return $validated_image;

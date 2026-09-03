@@ -113,7 +113,8 @@ export default function AIBlockCreatorModal( {
 	}
 
 	const settings = window.aiBlockCreatorSettings || {};
-	const aiAvailable = settings.hasAiClient && settings.aiSupported !== false;
+	const hasConnectedLlm = settings.hasConnectedLlm !== false;
+	const supportsImageInput = Boolean( settings.supportsImageInput );
 	const canManageLibrary = settings.canManageLibrary !== false;
 
 	const resetState = () => {
@@ -139,8 +140,8 @@ export default function AIBlockCreatorModal( {
 		);
 	};
 
-	const handleGenerate = async ( customPrompt ) => {
-		const targetPrompt = customPrompt || prompt;
+	const handleGenerate = async ( explicitPrompt = null ) => {
+		const targetPrompt = explicitPrompt || prompt;
 		if ( ! targetPrompt && ! screenshot ) {
 			return;
 		}
@@ -149,139 +150,141 @@ export default function AIBlockCreatorModal( {
 		setError( null );
 		setSaveSuccess( false );
 
-		const userMessage = {
-			role: 'user',
-			content:
-				targetPrompt ||
-				__( '[Screenshot attached]', 'ai-block-creator' ),
-			hasImage: Boolean( screenshot ),
-		};
-
-		setConversation( ( prev ) => [ ...prev, userMessage ] );
+		const newConversation = [
+			...conversation,
+			{
+				role: 'user',
+				content:
+					targetPrompt ||
+					__( '[Screenshot uploaded]', 'ai-block-creator' ),
+			},
+		];
+		setConversation( newConversation );
 
 		try {
+			const payload = {
+				prompt: targetPrompt,
+				history: newConversation,
+			};
+
+			if ( supportsImageInput && screenshot ) {
+				payload.image = screenshot;
+			}
+
+			if ( currentBlock ) {
+				payload.current_block = currentBlock;
+			}
+
 			const response = await apiFetch( {
 				path: '/ai-block-creator/v1/generate',
 				method: 'POST',
-				data: {
-					prompt: targetPrompt,
-					image: screenshot,
-					history: conversation.map( ( { role, content } ) => ( {
-						role,
-						content,
-					} ) ),
-					current_block: currentBlock,
-				},
+				data: payload,
 			} );
 
-			if ( response && response.block ) {
-				setCurrentBlock( response.block );
+			if ( response && response.name ) {
+				registerDynamicAiBlock( response );
+				setCurrentBlock( response );
 				setConversation( ( prev ) => [
 					...prev,
 					{
 						role: 'assistant',
 						content: sprintf(
-							// translators: %s: generated block title.
+							// translators: %s: block title.
 							__(
-								'Generated custom block "%s".',
+								'Created block "%s"! You can preview it on the right, refine it further, or insert it into your post.',
 								'ai-block-creator'
 							),
-							response.block.title
+							response.title || response.name
 						),
 					},
 				] );
-				// Clear prompt for next conversational refinement.
 				setPrompt( '' );
+				setScreenshot( null );
 			} else {
 				throw new Error(
 					__(
-						'No block definition returned from server.',
+						'Invalid response from AI generator.',
 						'ai-block-creator'
 					)
 				);
 			}
 		} catch ( err ) {
-			setError(
-				err.message ||
-					__(
-						'Failed to generate block. Please try again.',
-						'ai-block-creator'
-					)
-			);
+			const message =
+				err?.message ||
+				err?.data?.message ||
+				__( 'Failed to generate block.', 'ai-block-creator' );
+			setError( message );
+			setConversation( ( prev ) => [
+				...prev,
+				{
+					role: 'assistant',
+					content: sprintf(
+						// translators: %s: error message.
+						__( 'Error: %s', 'ai-block-creator' ),
+						message
+					),
+				},
+			] );
 		} finally {
 			setIsGenerating( false );
 		}
 	};
 
-	/**
-	 * Persists the current block definition to the server library, then runs
-	 * a caller-supplied follow-up with the server's normalized response
-	 * (which is authoritative — its slug/name may differ from what the
-	 * client holds if e.g. a slug collision forced a rename).
-	 *
-	 * @param {Function} onSaved Called with the saved block definition.
-	 */
-	const persistBlock = async ( onSaved ) => {
-		if ( ! currentBlock ) {
+	const handleSaveToLibrary = async () => {
+		if ( ! currentBlock || isSaving ) {
 			return;
 		}
-
 		setIsSaving( true );
 		setError( null );
+
 		try {
-			const response = await apiFetch( {
+			const saved = await apiFetch( {
 				path: '/ai-block-creator/v1/blocks',
 				method: 'POST',
-				data: {
-					block_definition: currentBlock,
-				},
+				data: currentBlock,
 			} );
 
-			const savedBlock = response?.block || currentBlock;
-			registerDynamicAiBlock( savedBlock );
+			registerDynamicAiBlock( saved );
+			setCurrentBlock( saved );
+			setSaveSuccess( true );
 			notifyLibraryUpdated();
-			onSaved( savedBlock );
 		} catch ( err ) {
 			setError(
-				sprintf(
-					// translators: %s: error message from the server.
-					__( 'Failed to save block: %s', 'ai-block-creator' ),
-					err.message || ''
-				)
+				err?.message ||
+					err?.data?.message ||
+					__( 'Failed to save block to library.', 'ai-block-creator' )
 			);
 		} finally {
 			setIsSaving( false );
 		}
 	};
 
-	const handleInsertIntoPost = () =>
-		persistBlock( ( savedBlock ) => {
-			const initialAttrs = {};
-			if ( savedBlock.attributes ) {
-				Object.keys( savedBlock.attributes ).forEach( ( k ) => {
-					initialAttrs[ k ] =
-						savedBlock.attributes[ k ]?.default ?? '';
-				} );
-			}
+	const handleInsertIntoPost = () => {
+		if ( ! currentBlock ) {
+			return;
+		}
 
-			const blockInstance = createBlock( savedBlock.name, initialAttrs );
+		const blockName = currentBlock.name.startsWith( 'ai-block/' )
+			? currentBlock.name
+			: `ai-block/${ currentBlock.name }`;
 
-			if ( placeholderClientId ) {
-				replaceBlocks( placeholderClientId, blockInstance );
-			} else {
-				insertBlocks( blockInstance );
-			}
+		const newBlockInstance = createBlock(
+			blockName,
+			currentBlock.attributes || {}
+		);
 
-			resetState();
-			onClose();
-		} );
+		if ( placeholderClientId ) {
+			replaceBlocks( placeholderClientId, newBlockInstance );
+		} else {
+			insertBlocks( newBlockInstance );
+		}
 
-	const handleSaveToLibrary = () =>
-		persistBlock( () => setSaveSuccess( true ) );
+		onClose();
+	};
 
 	const generateButtonLabel = currentBlock
-		? '✨ ' + __( 'Refine Block', 'ai-block-creator' )
-		: '✨ ' + __( 'Generate Block', 'ai-block-creator' );
+		? __( '✨ Refine Block', 'ai-block-creator' )
+		: __( '✨ Generate Block', 'ai-block-creator' );
 
 	return (
 		<Modal
@@ -292,10 +295,15 @@ export default function AIBlockCreatorModal( {
 						{ __( 'AI Block Creator', 'ai-block-creator' ) }
 					</span>
 					<span className="ai-modal-tagline">
-						{ __(
-							'Speak, type, or screenshot blocks into existence',
-							'ai-block-creator'
-						) }
+						{ supportsImageInput
+							? __(
+									'Speak, type, or screenshot blocks into existence',
+									'ai-block-creator'
+							  )
+							: __(
+									'Speak or type blocks into existence',
+									'ai-block-creator'
+							  ) }
 					</span>
 				</div>
 			}
@@ -304,7 +312,7 @@ export default function AIBlockCreatorModal( {
 			isFullScreen={ false }
 		>
 			<div className="ai-block-creator-container">
-				{ ! aiAvailable && (
+				{ ! hasConnectedLlm && (
 					<Notice status="warning" isDismissible={ false }>
 						{ __(
 							'No AI provider is currently configured for this site. Ask an administrator to connect one in Settings before generating blocks.',
@@ -387,7 +395,8 @@ export default function AIBlockCreatorModal( {
 												handleGenerate( item.prompt );
 											} }
 											disabled={
-												isGenerating || ! aiAvailable
+												isGenerating ||
+												! hasConnectedLlm
 											}
 										>
 											{ item.label }
@@ -426,7 +435,7 @@ export default function AIBlockCreatorModal( {
 										  )
 								}
 								rows={ 4 }
-								disabled={ isGenerating || ! aiAvailable }
+								disabled={ isGenerating || ! hasConnectedLlm }
 								className="ai-main-textarea"
 							/>
 
@@ -435,16 +444,19 @@ export default function AIBlockCreatorModal( {
 									<VoiceInput
 										onTranscript={ handleVoiceTranscript }
 										disabled={
-											isGenerating || ! aiAvailable
+											isGenerating || ! hasConnectedLlm
 										}
 									/>
-									<ImageDropzone
-										image={ screenshot }
-										onImageChange={ setScreenshot }
-										disabled={
-											isGenerating || ! aiAvailable
-										}
-									/>
+									{ supportsImageInput && (
+										<ImageDropzone
+											image={ screenshot }
+											onImageChange={ setScreenshot }
+											disabled={
+												isGenerating ||
+												! hasConnectedLlm
+											}
+										/>
+									) }
 								</div>
 
 								<Button
@@ -452,7 +464,7 @@ export default function AIBlockCreatorModal( {
 									onClick={ () => handleGenerate() }
 									disabled={
 										isGenerating ||
-										! aiAvailable ||
+										! hasConnectedLlm ||
 										( ! prompt && ! screenshot )
 									}
 									className="ai-generate-submit-btn"
@@ -505,10 +517,15 @@ export default function AIBlockCreatorModal( {
 										) }
 									</h4>
 									<p>
-										{ __(
-											'Type a description, dictate with your microphone, or paste a screenshot to watch your custom block come to life here.',
-											'ai-block-creator'
-										) }
+										{ supportsImageInput
+											? __(
+													'Type a description, dictate with your microphone, or paste a screenshot to watch your custom block come to life here.',
+													'ai-block-creator'
+											  )
+											: __(
+													'Type a description or dictate with your microphone to watch your custom block come to life here.',
+													'ai-block-creator'
+											  ) }
 									</p>
 								</div>
 							</div>
