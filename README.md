@@ -76,9 +76,15 @@ npm run build
 # Lint JS/CSS (composer install first, then composer lint, for PHP)
 npm run lint-js
 npm run lint-css
+
+# Run the test suites
+npm run test-unit-js   # Jest
+composer test           # PHPUnit — needs `composer install` first
 ```
 
 `build/` is committed to this repository — installing via a Git checkout (e.g. the Playground blueprint's `git:directory` step) doesn't run a build step, so a PR touching `src/` should include a rebuilt `build/`.
+
+The PHPUnit suite boots a real WordPress install (see `tests/php/bootstrap.php`) rather than the synthetic WP core test harness; if this plugin isn't checked out at the conventional `wp-content/plugins/<slug>/` depth, point it at one with `WP_ROOT=/path/to/wordpress composer test`.
 
 ---
 
@@ -109,6 +115,7 @@ This project embraces collaborative AI-assisted development. Below is a log of m
   * Added the **AI Block Library** sidebar (list/insert/refine/delete saved blocks), which previously had no UI despite the delete endpoint already existing server-side.
   * Replaced the hardcoded accent color throughout the editor UI with WordPress's admin color-scheme custom properties, so it follows whichever scheme (Blue, Coffee, Midnight, ...) the user has chosen.
   * Brought `AGENTS.md`, `architecture-and-design.md`, and this file up to date with the architecture changes above.
+  * Built the PHPUnit (`tests/php/`) and Jest (`src/**/test/*.test.js`) test suites, and in the process of running them for real, caught and fixed two bugs the earlier ad hoc verification had missed: attribute names were being silently lowercased (`accentColor` → `accentcolor`) by a sanitizer meant for URL slugs, and the `register_post_meta()` sanitize callback was double-unslashing, corrupting and dropping any saved block whose HTML contained an escaped quote.
 
 ---
 

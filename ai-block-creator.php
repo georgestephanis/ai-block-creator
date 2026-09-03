@@ -80,17 +80,27 @@ add_action( 'init', __NAMESPACE__ . '\\register_cpt', 5 );
  * already validates before writing, but any other code path that touches
  * this meta key directly is protected too.
  *
- * @param mixed $meta_value Raw meta value being saved.
- * @return string Slashed, re-validated JSON.
+ * Note: sanitize_meta() (which invokes this callback, via the
+ * `sanitize_{$object_type}_meta_{$meta_key}` filter) is called from
+ * update_metadata() AFTER that function has already run wp_unslash() on the
+ * incoming value once. This callback therefore receives an already-unslashed
+ * value and must return a clean (also unslashed) value — re-unslashing the
+ * input here would corrupt any backslash-containing JSON content (e.g. the
+ * `\"` WordPress's own wp_json_encode() produces for double quotes inside
+ * render_html), and re-slashing the output would leave a stray layer of
+ * slashes in the stored value, since nothing downstream unslashes it again.
+ *
+ * @param mixed $meta_value Meta value being saved (already unslashed by core).
+ * @return string Clean (unslashed), re-validated JSON.
  */
 function sanitize_stored_definition_meta( $meta_value ): string {
-	$decoded = is_string( $meta_value ) ? json_decode( wp_unslash( $meta_value ), true ) : null;
+	$decoded = is_string( $meta_value ) ? json_decode( $meta_value, true ) : null;
 	if ( ! is_array( $decoded ) ) {
 		return '';
 	}
 
 	$normalized = AI_Block_Store::normalize_and_validate( $decoded );
-	return wp_slash( wp_json_encode( $normalized ) );
+	return (string) wp_json_encode( $normalized );
 }
 
 /**

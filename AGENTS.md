@@ -82,8 +82,21 @@ ai-block-creator/
   ```bash
   npm run lint-js       # or lint-js:fix
   npm run lint-css      # or lint-css:fix
-  npm run test          # runs both linters
+  npm run test          # lint-js + lint-css + test-unit-js
   ```
+- **Run the PHP test suite** (real WordPress install, not the synthetic WP core test harness — see `tests/php/bootstrap.php` for why):
+  ```bash
+  composer install   # first time only, pulls in phpunit + yoast/phpunit-polyfills
+  composer test       # == vendor/bin/phpunit
+  ```
+  Tests that touch the database (`AI_Block_Store::save()`/`delete()`) clean up everything they create in `tearDown()` — there's no per-test transaction rollback, so a new test that writes to the DB must clean up after itself the same way.
+
+  If this plugin isn't checked out at the conventional `wp-content/plugins/<slug>/` depth (e.g. a CI checkout of just the plugin repo), point the bootstrap at a WordPress install: `WP_ROOT=/path/to/wordpress composer test`.
+- **Run the JS test suite** (Jest via `@wordpress/scripts`):
+  ```bash
+  npm run test-unit-js
+  ```
+  `@wordpress/blocks`, `@wordpress/block-editor`, `@wordpress/components`, and `@wordpress/element` are stubbed for Jest (see `jest-unit.config.js` and `tests/js/mocks/wp-package-stub.js`) rather than npm-installed as real packages — those ship as TypeScript/ESM-first source that Jest's default config can't parse, and webpack never actually resolves them from disk anyway (they're mapped to `wp.*` globals at build time). Only stub packages that a test file doesn't need real behavior from; `@wordpress/i18n` and `@wordpress/escape-html` are real, since their actual output matters for the escaping assertions.
 - **Build Assets**:
   ```bash
   npm run build
@@ -100,6 +113,6 @@ ai-block-creator/
   ```bash
   wp eval-file /path/to/a/script/that/calls/AI_Block_Creator\\AI_Block_Renderer::render_template()
   ```
-  When changing escaping or template-language behavior, verify against a real `wp-load.php` bootstrap (not stubbed `esc_*`/`wp_kses_*` functions) — the stubs used during initial development hid a real bug where a stubbed `esc_url()` didn't actually strip `javascript:` the way core's does.
+  When changing escaping or template-language behavior, verify against a real `wp-load.php` bootstrap (not stubbed `esc_*`/`wp_kses_*` functions) — the stubs used during initial development hid a real bug where a stubbed `esc_url()` didn't actually strip `javascript:` the way core's does. `tests/php/RendererTest.php` formalizes exactly this verification; extend it rather than re-deriving ad hoc checks by hand.
 
-No PHPUnit or Jest test suite exists yet for this plugin (tracked in `plans/TODO.md`, DX-5) — the lint tooling above is the current automated check.
+`tests/php/` (PHPUnit) and `src/**/test/*.test.js` (Jest) are the automated test suites — see `composer test` / `npm run test-unit-js` above. Both were built by writing tests for the exact bugs listed in `plans/code-review-2026-09-03.md` and running them for real; in the process, `tests/php/BlockStoreTest.php` caught a real bug this way — `AI_Block_Store::sanitize_attributes()`/`sanitize_edit_fields()` were using `sanitize_key()` (which lowercases) on attribute names, silently renaming every camelCase attribute (`accentColor` → `accentcolor`) — and the `register_post_meta()` sanitize_callback in `ai-block-creator.php` was double-unslashing, which corrupted and dropped any saved block whose `render_html` contained an escaped quote (i.e. nearly all of them). Both are fixed; keep writing tests that exercise real WordPress functions against the real bootstrap rather than hand-rolled stubs — that's exactly how both bugs were caught.

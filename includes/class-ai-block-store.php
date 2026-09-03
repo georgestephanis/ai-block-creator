@@ -292,6 +292,23 @@ class AI_Block_Store {
 	}
 
 	/**
+	 * Allowlists an attribute/edit-field name to safe identifier characters,
+	 * WITHOUT lowercasing. Unlike sanitize_key(), which is meant for
+	 * database/URL-safe slugs and lowercases everything, attribute names are
+	 * Gutenberg/JS object keys and are conventionally camelCase (e.g.
+	 * "accentColor", "isFeatured") -- lowercasing them here would silently
+	 * rename every camelCase attribute the AI generates, breaking any
+	 * render_html template or edit_fields entry that references the
+	 * original name.
+	 *
+	 * @param string $identifier Raw attribute/field name.
+	 * @return string
+	 */
+	private static function sanitize_identifier( string $identifier ): string {
+		return preg_replace( '/[^a-zA-Z0-9_-]/', '', $identifier ) ?? '';
+	}
+
+	/**
 	 * Restricts block category to the ones offered in the schema/prompt.
 	 *
 	 * @param string $category Raw category slug.
@@ -312,7 +329,7 @@ class AI_Block_Store {
 		$clean = array();
 
 		foreach ( $attributes as $key => $config ) {
-			$key = sanitize_key( (string) $key );
+			$key = self::sanitize_identifier( (string) $key );
 			if ( '' === $key || ! is_array( $config ) ) {
 				continue;
 			}
@@ -367,11 +384,14 @@ class AI_Block_Store {
 		$clean = array();
 
 		foreach ( $edit_fields as $field ) {
-			if ( ! is_array( $field ) || empty( $field['name'] ) || ! isset( $attributes[ sanitize_key( (string) $field['name'] ) ] ) ) {
+			if ( ! is_array( $field ) || empty( $field['name'] ) ) {
 				continue;
 			}
 
-			$name = sanitize_key( (string) $field['name'] );
+			$name = self::sanitize_identifier( (string) $field['name'] );
+			if ( '' === $name || ! isset( $attributes[ $name ] ) ) {
+				continue;
+			}
 			$type = is_string( $field['type'] ?? null ) ? $field['type'] : 'text';
 			if ( ! in_array( $type, self::ALLOWED_FIELD_TYPES, true ) ) {
 				$type = 'text';

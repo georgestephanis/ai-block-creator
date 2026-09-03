@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit
+	bootstrap="tests/php/bootstrap.php"
+	colors="true"
+>
+	<testsuites>
+		<testsuite name="ai-block-creator">
+			<directory suffix="Test.php">tests/php</directory>
+		</testsuite>
+	</testsuites>
+	<php>
+		<!-- Required by yoast/phpunit-polyfills so it knows which PHPUnit-version
+		     compatibility shims to load. -->
+		<env name="WP_TESTS_PHPUNIT_POLYFILLS_PATH" value="vendor/yoast/phpunit-polyfills" />
+	</php>
+	<source>
+		<include>
+			<directory suffix=".php">includes</directory>
+		</include>
+	</source>
+</phpunit>

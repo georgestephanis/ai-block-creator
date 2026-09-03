@@ -11,7 +11,8 @@
     "lint-css": "wp-scripts lint-style src/**/*.scss",
     "lint-css:fix": "wp-scripts lint-style src/**/*.scss --fix",
     "format": "wp-scripts format src",
-    "test": "npm run lint-js && npm run lint-css"
+    "test-unit-js": "wp-scripts test-unit-js",
+    "test": "npm run lint-js && npm run lint-css && npm run test-unit-js"
   },
   "keywords": [
     "wordpress",
