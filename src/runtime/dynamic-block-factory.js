@@ -139,37 +139,45 @@ export function interpolateTemplate( template, attributes ) {
 		}
 	);
 
-	// Replace variables: {{key}}, escaped according to the attribute context
-	// each placeholder appears in (href/src → URL, style="" → CSS value,
-	// everything else → HTML text/attribute escaping).
+	// 1. Process style="..." attributes (safecss filtering on style values).
+	html = html.replace( /style\s*=\s*"([^"]*)"/gi, ( match, styleContent ) => {
+		const interpolated = styleContent.replace(
+			/\{\{([a-zA-Z0-9_-]+)\}\}/g,
+			( _, key ) => {
+				const val = attributes[ key ];
+				return val !== undefined && val !== null
+					? sanitizeStyleValue( stringify( val ) )
+					: '';
+			}
+		);
+		return `style="${ escapeAttribute( interpolated ) }"`;
+	} );
+
+	// 2. Process href/src="..." attributes (URL escaping).
 	html = html.replace(
-		/(?:(href|src)=")\{\{([a-zA-Z0-9_-]+)\}\}"|(?:style=")([^"]*)\{\{([a-zA-Z0-9_-]+)\}\}([^"]*)"|\{\{([a-zA-Z0-9_-]+)\}\}/g,
-		(
-			match,
-			urlAttr,
-			urlKey,
-			stylePrefix,
-			styleKey,
-			styleSuffix,
-			plainKey
-		) => {
-			if ( urlAttr && urlKey !== undefined ) {
-				return `${ urlAttr }="${ sanitizeUrlValue(
-					stringify( attributes[ urlKey ] )
-				) }"`;
-			}
-			if ( styleKey ) {
-				return `style="${ stylePrefix }${ sanitizeStyleValue(
-					stringify( attributes[ styleKey ] )
-				) }${ styleSuffix }"`;
-			}
-			const val = attributes[ plainKey ];
-			if ( val === undefined ) {
-				return '';
-			}
-			return escapeHTML( stringify( val ) );
+		/(href|src)\s*=\s*"([^"]*)"/gi,
+		( match, attrName, urlContent ) => {
+			const interpolated = urlContent.replace(
+				/\{\{([a-zA-Z0-9_-]+)\}\}/g,
+				( _, key ) => {
+					const val = attributes[ key ];
+					return val !== undefined && val !== null
+						? stringify( val )
+						: '';
+				}
+			);
+			return `${ attrName }="${ sanitizeUrlValue( interpolated ) }"`;
 		}
 	);
+
+	// 3. Replace remaining generic variables: {{key}} in text/attribute context.
+	html = html.replace( /\{\{([a-zA-Z0-9_-]+)\}\}/g, ( match, key ) => {
+		const val = attributes[ key ];
+		if ( val === undefined ) {
+			return '';
+		}
+		return escapeHTML( stringify( val ) );
+	} );
 
 	return html;
 }

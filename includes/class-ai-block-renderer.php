@@ -134,34 +134,58 @@ class AI_Block_Renderer {
 			$template
 		);
 
-		// Replace regular variables: {{attributeName}}, escaping by the
-		// attribute context they're found in.
-		$rendered = preg_replace_callback(
-			'/(?:(href|src)\s*=\s*")\{\{([a-zA-Z0-9_-]+)\}\}"|(?:style\s*=\s*")([^"]*)\{\{([a-zA-Z0-9_-]+)\}\}([^"]*)"|\{\{([a-zA-Z0-9_-]+)\}\}/',
+		// 1. Process style="..." attributes: filter each placeholder value through
+		// the CSS attribute allowlist.
+		$template = (string) preg_replace_callback(
+			'/style\s*=\s*"([^"]*)"/i',
 			function ( $matches ) use ( $attributes ) {
-				// URL context: href="{{x}}" or src="{{x}}".
-				if ( ! empty( $matches[1] ) && isset( $matches[2] ) ) {
-					$val = $attributes[ $matches[2] ] ?? '';
-					return $matches[1] . '="' . esc_url( (string) self::stringify( $val ) ) . '"';
-				}
+				$style_content = $matches[1];
+				$style_content = preg_replace_callback(
+					'/\{\{([a-zA-Z0-9_-]+)\}\}/',
+					function ( $m ) use ( $attributes ) {
+						$key = $m[1];
+						$val = $attributes[ $key ] ?? '';
+						return safecss_filter_attr( (string) self::stringify( $val ) );
+					},
+					$style_content
+				);
+				return 'style="' . esc_attr( (string) $style_content ) . '"';
+			},
+			$template
+		);
 
-				// style="...{{x}}..." context: filter through the CSS attribute allowlist.
-				if ( isset( $matches[4] ) && '' !== $matches[4] ) {
-					$key        = $matches[4];
-					$val        = $attributes[ $key ] ?? '';
-					$safe_value = safecss_filter_attr( (string) self::stringify( $val ) );
-					return 'style="' . $matches[3] . esc_attr( $safe_value ) . $matches[5] . '"';
-				}
+		// 2. Process href="..." and src="..." attributes: route through esc_url().
+		$template = (string) preg_replace_callback(
+			'/(href|src)\s*=\s*"([^"]*)"/i',
+			function ( $matches ) use ( $attributes ) {
+				$attr_name   = $matches[1];
+				$url_content = $matches[2];
+				$url_content = preg_replace_callback(
+					'/\{\{([a-zA-Z0-9_-]+)\}\}/',
+					function ( $m ) use ( $attributes ) {
+						$key = $m[1];
+						$val = $attributes[ $key ] ?? '';
+						return (string) self::stringify( $val );
+					},
+					$url_content
+				);
+				return $attr_name . '="' . esc_url( (string) $url_content ) . '"';
+			},
+			$template
+		);
 
-				// Generic {{x}} in text/attribute context.
-				$key = $matches[6] ?? '';
-				if ( '' === $key || ! isset( $attributes[ $key ] ) ) {
+		// 3. Replace remaining generic variables: {{attributeName}} in text or other attributes.
+		$rendered = preg_replace_callback(
+			'/\{\{([a-zA-Z0-9_-]+)\}\}/',
+			function ( $matches ) use ( $attributes ) {
+				$key = $matches[1];
+				if ( ! isset( $attributes[ $key ] ) ) {
 					return '';
 				}
 
 				return esc_html( self::stringify( $attributes[ $key ] ) );
 			},
-			$rendered ?? $template
+			$template
 		);
 
 		return (string) $rendered;

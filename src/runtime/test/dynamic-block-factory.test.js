@@ -116,6 +116,26 @@ describe( 'interpolateTemplate', () => {
 		).toBe( 'a, b' );
 	} );
 
+	it( 'interpolates multiple variables within the same style attribute', () => {
+		const html = interpolateTemplate(
+			'<div style="color: {{color}}; background: {{bg}};">x</div>',
+			{ color: 'red', bg: 'blue' }
+		);
+		expect( html ).toBe(
+			'<div style="color: red; background: blue;">x</div>'
+		);
+	} );
+
+	it( 'interpolates multiple variables within a URL attribute', () => {
+		const html = interpolateTemplate(
+			'<a href="https://example.com/{{path}}?plan={{plan}}">link</a>',
+			{ path: 'pricing', plan: 'pro' }
+		);
+		expect( html ).toBe(
+			'<a href="https://example.com/pricing?plan=pro">link</a>'
+		);
+	} );
+
 	it( 'renders an empty string for a missing attribute rather than leaving the placeholder', () => {
 		expect( interpolateTemplate( '{{missing}}', {} ) ).toBe( '' );
 	} );

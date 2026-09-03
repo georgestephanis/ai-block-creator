@@ -174,6 +174,26 @@ final class RendererTest extends TestCase
         $this->assertSame('a, b', $html);
     }
 
+    public function test_interpolates_multiple_variables_within_same_style_attribute(): void
+    {
+        $html = AI_Block_Renderer::render_template(
+            '<div style="color: {{color}}; background: {{bg}};">x</div>',
+            array('color' => 'red', 'bg' => 'blue')
+        );
+
+        $this->assertSame('<div style="color: red; background: blue;">x</div>', $html);
+    }
+
+    public function test_interpolates_multiple_variables_within_url_attribute(): void
+    {
+        $html = AI_Block_Renderer::render_template(
+            '<a href="https://example.com/{{path}}?plan={{plan}}">link</a>',
+            array('path' => 'pricing', 'plan' => 'pro')
+        );
+
+        $this->assertSame('<a href="https://example.com/pricing?plan=pro">link</a>', $html);
+    }
+
     public function test_missing_attribute_renders_empty_string_not_the_placeholder(): void
     {
         $this->assertSame('', AI_Block_Renderer::render_template('{{missing}}', array()));
