@@ -1,6 +1,6 @@
 /**
  * Inserter Tab Controller.
- * Adds an "AI" / "✨ AI Blocks" tab to Gutenberg's Block Inserter tablist.
+ * Adds an "AI Blocks" tab exclusively to Gutenberg's Block Inserter tablist.
  */
 
 import { createElement, createRoot, render } from '@wordpress/element';
@@ -14,7 +14,41 @@ let panelRoot = null;
 let isAiTabActive = false;
 
 /**
- * Mounts or renders the AIInserterTab component into the custom panel container.
+ * Finds the Block Inserter tablist, explicitly distinguishing it from other
+ * tablists like List View / Outline.
+ *
+ * @return {HTMLElement|null} The inserter tablist or null.
+ */
+function findInserterTablist() {
+	const tablists = document.querySelectorAll( '[role="tablist"]' );
+	for ( const tablist of tablists ) {
+		// Ignore if this tablist is inside Document Overview (List View / Outline).
+		if (
+			tablist.closest(
+				'.edit-post-editor-regions__list-view, .block-editor-list-view-sidebar, .edit-post-editor-regions__sidebar'
+			)
+		) {
+			continue;
+		}
+
+		// Must contain a "Blocks" or "Patterns" tab.
+		const tabs = Array.from(
+			tablist.querySelectorAll( 'button[role="tab"]' )
+		);
+		const hasInserterTab = tabs.some( ( btn ) => {
+			const text = ( btn.textContent || '' ).trim().toLowerCase();
+			return text === 'blocks' || text === 'patterns';
+		} );
+
+		if ( hasInserterTab ) {
+			return tablist;
+		}
+	}
+	return null;
+}
+
+/**
+ * Mounts the AIInserterTab component into the custom panel container.
  *
  * @param {HTMLElement} container   The panel container element.
  * @param {Function}    onOpenModal Callback to launch the modal.
@@ -35,7 +69,7 @@ function renderTabContent( container, onOpenModal ) {
 }
 
 /**
- * Activates the custom AI tab and hides the default Gutenberg inserter content.
+ * Activates the AI tab and displays the AI panel overlay.
  *
  * @param {HTMLElement} tablist        The tablist element containing all tab buttons.
  * @param {HTMLElement} aiTabBtn       The injected AI tab button.
@@ -45,11 +79,10 @@ function renderTabContent( container, onOpenModal ) {
 function activateAiTab( tablist, aiTabBtn, panelContainer, onOpenModal ) {
 	isAiTabActive = true;
 
-	// Set active attributes on the AI tab button.
 	aiTabBtn.setAttribute( 'aria-selected', 'true' );
 	aiTabBtn.classList.add( 'is-active', 'components-tab-panel__tab-active' );
 
-	// Deactivate all sibling tabs in the tablist.
+	// Deactivate sibling tabs visually.
 	const siblingTabs = tablist.querySelectorAll(
 		'button[role="tab"]:not(#' + TAB_BUTTON_ID + ')'
 	);
@@ -58,26 +91,13 @@ function activateAiTab( tablist, aiTabBtn, panelContainer, onOpenModal ) {
 		tab.classList.remove( 'is-active', 'components-tab-panel__tab-active' );
 	} );
 
-	// Hide the default tab panel content in Gutenberg's inserter.
-	const parentMenu = tablist.closest(
-		'.block-editor-inserter__menu, .block-editor-tabbed-sidebar, .block-editor-inserter__sidebar, .edit-post-editor-regions__inserter'
-	);
-	if ( parentMenu ) {
-		const defaultPanels = parentMenu.querySelectorAll(
-			'.block-editor-inserter__tablist-content, .block-editor-tabbed-sidebar__tab-content, .block-editor-inserter__panel, .components-tab-panel__tab-content, .block-editor-inserter__content'
-		);
-		defaultPanels.forEach( ( panel ) => {
-			panel.style.setProperty( 'display', 'none', 'important' );
-		} );
-	}
-
-	// Show our custom AI panel and render contents.
+	// Display the AI panel container overlay.
 	panelContainer.style.display = 'block';
 	renderTabContent( panelContainer, onOpenModal );
 }
 
 /**
- * Deactivates the custom AI tab and restores Gutenberg's default tab panel content.
+ * Deactivates the AI tab and hides the AI panel overlay.
  *
  * @param {HTMLElement} tablist        The tablist element containing all tab buttons.
  * @param {HTMLElement} aiTabBtn       The injected AI tab button.
@@ -100,58 +120,46 @@ function deactivateAiTab( tablist, aiTabBtn, panelContainer ) {
 	if ( panelContainer ) {
 		panelContainer.style.display = 'none';
 	}
-
-	// Restore default Gutenberg inserter panel visibility.
-	const parentMenu = tablist.closest(
-		'.block-editor-inserter__menu, .block-editor-tabbed-sidebar, .block-editor-inserter__sidebar, .edit-post-editor-regions__inserter'
-	);
-	if ( parentMenu ) {
-		const defaultPanels = parentMenu.querySelectorAll(
-			'.block-editor-inserter__tablist-content, .block-editor-tabbed-sidebar__tab-content, .block-editor-inserter__panel, .components-tab-panel__tab-content, .block-editor-inserter__content'
-		);
-		defaultPanels.forEach( ( panel ) => {
-			panel.style.removeProperty( 'display' );
-		} );
-	}
 }
 
 /**
- * Watches for the Gutenberg Inserter tablist and injects the AI tab button.
+ * Watches for Gutenberg's Block Inserter tablist and injects the AI Blocks tab.
  *
  * @param {Function} onOpenModal Callback to launch the modal.
  * @return {Function} Cleanup function.
  */
 export function watchForInserterTabs( onOpenModal ) {
 	const injectTab = () => {
-		const tablist = document.querySelector(
-			'.block-editor-inserter__tablist, .block-editor-tabbed-sidebar [role="tablist"], .edit-post-editor-regions__inserter [role="tablist"], .block-editor-inserter__menu [role="tablist"], [aria-label="Blocks and patterns"]'
-		);
-
+		const tablist = findInserterTablist();
 		if ( ! tablist ) {
+			// If inserter is closed, ensure inactive state.
+			isAiTabActive = false;
 			return;
 		}
+
+		const parentMenu =
+			tablist.closest(
+				'.block-editor-tabbed-sidebar, .block-editor-inserter__menu, .block-editor-inserter__sidebar, .edit-post-editor-regions__inserter'
+			) || tablist.parentElement;
 
 		let aiTabBtn = document.getElementById( TAB_BUTTON_ID );
 		let panelContainer = document.getElementById( PANEL_CONTAINER_ID );
 
-		// Create panel container if needed.
-		if ( ! panelContainer ) {
+		// Ensure parentMenu has relative positioning for absolute overlay panel.
+		if ( parentMenu && ! parentMenu.style.position ) {
+			parentMenu.style.position = 'relative';
+		}
+
+		// Create panel container if not present.
+		if ( ! panelContainer && parentMenu ) {
 			panelContainer = document.createElement( 'div' );
 			panelContainer.id = PANEL_CONTAINER_ID;
 			panelContainer.className = 'ai-inserter-panel-container';
 			panelContainer.style.display = 'none';
-
-			const parentMenu = tablist.closest(
-				'.block-editor-inserter__menu, .block-editor-tabbed-sidebar, .block-editor-inserter__sidebar, .edit-post-editor-regions__inserter'
-			);
-			if ( parentMenu ) {
-				parentMenu.appendChild( panelContainer );
-			} else if ( tablist.parentElement ) {
-				tablist.parentElement.appendChild( panelContainer );
-			}
+			parentMenu.appendChild( panelContainer );
 		}
 
-		// Create tab button if needed.
+		// Create tab button if not present.
 		if ( ! aiTabBtn ) {
 			aiTabBtn = document.createElement( 'button' );
 			aiTabBtn.id = TAB_BUTTON_ID;
@@ -181,9 +189,11 @@ export function watchForInserterTabs( onOpenModal ) {
 				tablist.appendChild( aiTabBtn );
 			}
 
-			// Add click listeners to sibling tabs so switching back deactivates the AI panel.
+			// Add click listeners to all sibling tabs and close buttons.
 			const siblingTabs = tablist.querySelectorAll(
-				'button[role="tab"]:not(#' + TAB_BUTTON_ID + ')'
+				'button[role="tab"]:not(#' +
+					TAB_BUTTON_ID +
+					'), .block-editor-inserter__tabs-close-button, button[aria-label="Close"]'
 			);
 			siblingTabs.forEach( ( tab ) => {
 				tab.addEventListener( 'click', () => {
