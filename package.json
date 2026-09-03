@@ -1,0 +1,24 @@
+{
+  "name": "ai-block-creator",
+  "version": "1.0.0",
+  "description": "Speak it, type it, or screenshot it into existence. AI custom block creator for WordPress Block Editor.",
+  "main": "build/index.js",
+  "scripts": {
+    "build": "wp-scripts build",
+    "start": "wp-scripts start"
+  },
+  "keywords": [
+    "wordpress",
+    "gutenberg",
+    "ai",
+    "blocks"
+  ],
+  "author": "George Stephanis",
+  "license": "GPL-2.0-or-later",
+  "devDependencies": {
+    "@wordpress/scripts": "^30.0.0"
+  },
+  "dependencies": {
+    "@wordpress/icons": "^15.5.0"
+  }
+}
