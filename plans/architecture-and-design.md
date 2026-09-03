@@ -21,6 +21,7 @@ Users can:
   - Automatically loads all published `ai_block_def` posts on `init` via `AI_Block_Store::all()` (request-scoped cached).
   - Configures attributes and server-side render callback `AI_Block_Renderer::render()`.
   - Registers each block's CSS as its own `wp_register_style()`/`wp_add_inline_style()` handle, passed to `register_block_type()` as `style`/`editor_style` — WordPress then enqueues it only on pages/editor sessions where that specific block is present, rather than inlining every saved block's CSS into every page.
+  - These registration/rendering conventions (apiVersion 3, `get_block_wrapper_attributes()`, `render_callback`, `save: () => null`, registering on `init`) follow WordPress's official [`wp-block-development` agent skill](https://github.com/WordPress/agent-skills/tree/trunk/skills/wp-block-development) — see `AGENTS.md` §4 for the specific citations and the one deliberate divergence (no `block.json`, since these blocks are generated at runtime rather than authored as files).
 - **REST Controller (`/wp-json/ai-block-creator/v1/`)**:
   - `POST /generate`: Integrates with WordPress 7.0+ AI Client (`wp_ai_client_prompt()`) to generate structured block definitions, including conversation history (`withHistory()`) and a JSON response schema (`asJsonResponse()`). Handles vision/multimodal requests when screenshots are uploaded (MIME-allowlisted, capped at 4MB). Requires `edit_posts` — nothing is persisted by this endpoint.
   - `GET /blocks`: Returns all saved custom block definitions. Requires `edit_posts`.

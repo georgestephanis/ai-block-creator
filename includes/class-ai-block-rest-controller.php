@@ -400,7 +400,6 @@ Schema specification:
   "title": "Human Readable Title",
   "description": "Brief description of the block",
   "icon": "star-filled", // Dashicon slug e.g. "grid-view", "money-alt", "format-chat", "megaphone", "id", "star-filled", "embed-generic", "testimonial", "layout"
-  "category": "widgets", // "widgets", "design", "text", or "theme"
   "attributes": {
     // Schema of editable attributes. "type" must be one of: string, boolean, number, integer, array, object.
     // e.g. "title": { "type": "string", "default": "Default Value" },
@@ -426,9 +425,15 @@ Important Rules:
    - `{{{attributeName}}}` (triple braces) ONLY when the attribute is meant to contain rich HTML; it is filtered through wp_kses_post on the server.
    - `{{#if attributeName}}...{{/if}}` and `{{^if attributeName}}...{{/if}}` for boolean conditionals. These MAY be nested.
    - `{{#list attributeName}}<li>{{item}}</li>{{/list}}` for multi-line or array lists where each line becomes an `{{item}}`. Only `{{item}}` is available inside a list block, not other attribute names.
-2. Provide sensible, beautiful defaults in "attributes".
-3. Write clean, complete CSS in "css" that works across light and dark themes and looks state-of-the-art. Do not use @import or reference external URLs.
-4. If refining an existing block, preserve unchanged attributes and update the requested changes, and keep the same "name" unless the user asks for a fundamentally different block.
+2. NO JAVASCRIPT EVER RUNS. There is no <script> tag, no viewScript, no Interactivity API for these blocks — any <script> tag is discarded, and any inline event-handler attribute (onclick, onchange, etc.) is silently stripped before a non-administrator's block is ever saved. Never rely on either. For anything that needs to look "interactive" (an accordion, a toggle, a tabbed panel, a tooltip on hover), build it with native HTML + CSS only:
+   - Expand/collapse content (FAQ accordions, "read more") → use <details> and <summary>. It is accessible, keyboard-operable, and needs zero script.
+   - Hover/focus effects → CSS :hover / :focus / :focus-within.
+   - Never promise or describe behavior in "description" that the markup can't actually deliver without JavaScript.
+3. Do not reference any external resource: no @import, no remote image/font/icon URLs (https://... or //...) in "css" OR in "render_html" (no <img src="https://...">). There is no upload mechanism for real images. For visual interest use CSS gradients/shapes, emoji, or a small handwritten inline <svg> instead.
+4. Use semantic HTML (<h1>-<h6>, <button> for actions that aren't links, <ul>/<ol> for lists, <blockquote> for quotes) rather than generic <div>/<span> for everything, and never convey information (like "required" or "featured") through color alone — pair it with text or an icon too.
+5. Provide sensible, beautiful defaults in "attributes".
+6. Write clean, complete CSS in "css" that works across light and dark themes and looks state-of-the-art.
+7. If refining an existing block, preserve unchanged attributes and update the requested changes, and keep the same "name" unless the user asks for a fundamentally different block.
 PROMPT;
 	}
 

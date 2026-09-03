@@ -194,6 +194,26 @@ final class BlockStoreTest extends TestCase
         });
     }
 
+    public function test_details_and_summary_survive_kses_for_non_unfiltered_html_users(): void
+    {
+        // The system prompt (AI_Block_REST_Controller::build_system_prompt())
+        // tells the model to build any expand/collapse interaction with
+        // <details>/<summary> instead of JavaScript, since no script ever
+        // runs for these blocks. That guidance is only honest if these tags
+        // actually survive the kses pass every non-unfiltered_html save goes
+        // through -- they're part of WordPress core's default "post" kses
+        // context, but this locks that assumption in as a regression test.
+        $this->withoutUnfilteredHtml(function () {
+            $def = AI_Block_Store::normalize_and_validate(array(
+                'title'       => 'Test',
+                'render_html' => '<details><summary>{{question}}</summary><p>{{answer}}</p></details>',
+            ));
+
+            $this->assertStringContainsString('<details>', $def['render_html']);
+            $this->assertStringContainsString('<summary>', $def['render_html']);
+        });
+    }
+
     public function test_render_html_is_passed_through_verbatim_for_unfiltered_html_users(): void
     {
         // Trusted authors (the default test user has this capability) may
