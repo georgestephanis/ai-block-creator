@@ -181,9 +181,11 @@ export default function AIBlockCreatorModal( {
 				data: payload,
 			} );
 
-			if ( response && response.name ) {
-				registerDynamicAiBlock( response );
-				setCurrentBlock( response );
+			const block = response?.block || response;
+
+			if ( block && block.name ) {
+				registerDynamicAiBlock( block );
+				setCurrentBlock( block );
 				setConversation( ( prev ) => [
 					...prev,
 					{
@@ -194,7 +196,7 @@ export default function AIBlockCreatorModal( {
 								'Created block "%s"! You can preview it on the right, refine it further, or insert it into your post.',
 								'ai-block-creator'
 							),
-							response.title || response.name
+							block.title || block.name
 						),
 					},
 				] );

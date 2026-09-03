@@ -228,26 +228,37 @@ class AI_Block_REST_Controller extends WP_REST_Controller {
 			}
 
 			$builder = wp_ai_client_prompt();
-			$builder->usingModelConfig( $model_config );
-			$builder->asJsonResponse();
+			$builder = $builder->using_model_config( $model_config );
+			$builder = $builder->as_json_response();
 
 			$history_messages = $this->build_history_messages( is_array( $history ) ? $history : array() );
 			if ( ! empty( $history_messages ) ) {
-				$builder->withHistory( ...$history_messages );
+				$builder = $builder->with_history( ...$history_messages );
 			}
 
 			if ( is_array( $validated_image ) ) {
-				$builder->withFile( $validated_image['data'], $validated_image['mime_type'] );
+				$builder = $builder->with_file( $validated_image['data'], $validated_image['mime_type'] );
 			}
 
-			$builder->withText( $user_content );
+			$builder = $builder->with_text( $user_content );
 
-			$result = $builder->generateTextResult();
+			$result = $builder->generate_text();
 			if ( is_wp_error( $result ) ) {
 				return $result;
 			}
 
-			$raw_text    = $result->toText();
+			if ( $result instanceof \WP_AI_Client_Prompt_Builder ) {
+				return new WP_Error(
+					'ai_generation_failed',
+					__( 'AI prompt failed to execute.', 'ai-block-creator' ),
+					array( 'status' => 500 )
+				);
+			}
+
+			$raw_text = is_object( $result ) && method_exists( $result, 'toText' )
+				? $result->toText()
+				: (string) $result;
+
 			$parsed_json = $this->extract_json_from_response( $raw_text );
 
 			if ( ! $parsed_json ) {
@@ -256,7 +267,7 @@ class AI_Block_REST_Controller extends WP_REST_Controller {
 					__( 'AI model did not return a valid block JSON structure.', 'ai-block-creator' ),
 					array(
 						'status'       => 502,
-						'raw_response' => substr( $raw_text, 0, 2000 ),
+						'raw_response' => substr( (string) $raw_text, 0, 2000 ),
 					)
 				);
 			}
