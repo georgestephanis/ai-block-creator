@@ -1,14 +1,13 @@
 /**
  * AI Inserter Card.
  * A featured action card rendered at the top of Gutenberg's native Blocks
- * inserter tab, allowing users to speak/type prompts or click chips directly
+ * inserter tab, allowing users to type prompts or click chips directly
  * from the standard "+" menu.
  */
 
 import { useState } from '@wordpress/element';
 import { Button } from '@wordpress/components';
 import { __ } from '@wordpress/i18n';
-import VoiceInput from './VoiceInput';
 
 const SUGGESTION_CHIPS = [
 	{
@@ -16,7 +15,7 @@ const SUGGESTION_CHIPS = [
 		prompt: 'Create a modern, responsive 3-tier pricing comparison table with a highlighted popular plan, feature checklists, and CTA buttons.',
 	},
 	{
-		label: __( '⭐ Testimonial Card', 'ai-block-creator' ),
+		label: __( '⭐ Testimonial', 'ai-block-creator' ),
 		prompt: 'Create a customer testimonial card with 5 star ratings, customer avatar, quote, author name, role, and company logo placeholder.',
 	},
 	{
@@ -24,16 +23,12 @@ const SUGGESTION_CHIPS = [
 		prompt: 'Create an interactive FAQ accordion with expandable question panels, smooth chevron indicator, and styled answer section.',
 	},
 	{
-		label: __( '📊 Stats Counter', 'ai-block-creator' ),
+		label: __( '📊 Stats Banner', 'ai-block-creator' ),
 		prompt: 'Create an impressive statistics / milestone banner with 4 metrics, large bold numbers, and subtitle labels on a dark gradient background.',
 	},
 	{
 		label: __( '🚀 Feature Grid', 'ai-block-creator' ),
 		prompt: 'Create a 3-column feature highlight card grid with colorful icon badges, feature titles, and brief descriptions.',
-	},
-	{
-		label: __( '👤 Speaker Bio', 'ai-block-creator' ),
-		prompt: 'Create a speaker bio card with circular profile image, bio paragraph, social media link badges, and topic tags.',
 	},
 ];
 
@@ -47,44 +42,31 @@ export default function AIInserterCard( { onOpenModal } ) {
 		}
 	};
 
-	const handleVoiceTranscript = ( transcript ) => {
-		setQuickPrompt( ( prev ) =>
-			prev ? `${ prev } ${ transcript }` : transcript
-		);
-	};
-
 	return (
 		<div className="ai-inserter-featured-card">
 			<div className="ai-inserter-featured-header">
 				<div className="ai-inserter-featured-title">
 					<span className="ai-sparkle">✨</span>
 					<strong>
-						{ __( 'Create Block with AI', 'ai-block-creator' ) }
+						{ __( 'Create with AI', 'ai-block-creator' ) }
 					</strong>
 				</div>
 				<Button
-					variant="primary"
+					variant="tertiary"
 					size="small"
-					className="ai-inserter-featured-btn"
+					className="ai-inserter-featured-link"
 					onClick={ () => handleLaunch() }
 				>
-					{ __( 'Open Creator', 'ai-block-creator' ) }
+					{ __( 'Open Modal ↗', 'ai-block-creator' ) }
 				</Button>
 			</div>
-
-			<p className="ai-inserter-featured-desc">
-				{ __(
-					'Describe any custom block to generate and insert it.',
-					'ai-block-creator'
-				) }
-			</p>
 
 			<div className="ai-inserter-featured-input-wrap">
 				<input
 					type="text"
 					className="ai-inserter-featured-input"
 					placeholder={ __(
-						'e.g. 3-tier pricing table, FAQ accordion…',
+						'Describe a block to generate…',
 						'ai-block-creator'
 					) }
 					value={ quickPrompt }
@@ -96,14 +78,13 @@ export default function AIInserterCard( { onOpenModal } ) {
 						}
 					} }
 				/>
-				<VoiceInput onTranscript={ handleVoiceTranscript } />
 				<Button
-					variant="secondary"
+					variant="primary"
 					size="small"
 					disabled={ ! quickPrompt.trim() }
 					onClick={ () => handleLaunch() }
 				>
-					{ __( 'Generate', 'ai-block-creator' ) }
+					{ __( 'Create', 'ai-block-creator' ) }
 				</Button>
 			</div>
 

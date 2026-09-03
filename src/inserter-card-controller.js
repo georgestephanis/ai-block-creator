@@ -19,12 +19,16 @@ let cardRoot = null;
  */
 export function watchForInserterCard( onOpenModal ) {
 	const injectCard = () => {
-		// Find Gutenberg's Block Inserter blocks panel.
-		const blocksPanel = document.querySelector(
-			'.block-editor-tabbed-sidebar__tabpanel .block-editor-inserter__panel-content, .block-editor-tabbed-sidebar__tabpanel .block-editor-inserter__quick-inserter, .block-editor-inserter__menu .block-editor-inserter__panel-content, .block-editor-inserter__results'
+		// Find Gutenberg's Block Inserter search container or panel.
+		const searchContainer = document.querySelector(
+			'.block-editor-tabbed-sidebar__tabpanel .block-editor-inserter__search, .block-editor-inserter__menu .block-editor-inserter__search, .block-editor-inserter__search'
 		);
 
-		if ( ! blocksPanel ) {
+		const panelContent = document.querySelector(
+			'.block-editor-tabbed-sidebar__tabpanel .block-editor-inserter__panel-content, .block-editor-inserter__menu .block-editor-inserter__panel-content, .block-editor-inserter__panel-content'
+		);
+
+		if ( ! searchContainer && ! panelContent ) {
 			return;
 		}
 
@@ -37,14 +41,18 @@ export function watchForInserterCard( onOpenModal ) {
 			cardContainer.id = INSERTER_CARD_CONTAINER_ID;
 			cardContainer.className = 'ai-inserter-featured-card-wrapper';
 
-			// Insert at the top of the blocks panel (before categories list).
-			if ( blocksPanel.firstChild ) {
-				blocksPanel.insertBefore(
-					cardContainer,
-					blocksPanel.firstChild
+			// Insert immediately after search container (above the "TEXT" category),
+			// or as first child of panel content.
+			if ( searchContainer && searchContainer.parentElement ) {
+				searchContainer.insertAdjacentElement(
+					'afterend',
+					cardContainer
 				);
-			} else {
-				blocksPanel.appendChild( cardContainer );
+			} else if ( panelContent && panelContent.parentElement ) {
+				panelContent.parentElement.insertBefore(
+					cardContainer,
+					panelContent
+				);
 			}
 
 			const element = createElement( AIInserterCard, {
