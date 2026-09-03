@@ -3,8 +3,16 @@
  * Converts JSON block definitions into registered WordPress Gutenberg blocks.
  */
 
-import { registerBlockType, getBlockType } from '@wordpress/blocks';
-import { useBlockProps, InspectorControls } from '@wordpress/block-editor';
+import {
+	registerBlockType,
+	unregisterBlockType,
+	getBlockType,
+} from '@wordpress/blocks';
+import {
+	useBlockProps,
+	InspectorControls,
+	useSettings,
+} from '@wordpress/block-editor';
 import {
 	PanelBody,
 	TextControl,
@@ -15,13 +23,65 @@ import {
 	SelectControl,
 } from '@wordpress/components';
 import { createElement, RawHTML, useMemo } from '@wordpress/element';
+import { escapeHTML, escapeAttribute } from '@wordpress/escape-html';
 
 /**
- * Interpolates attributes into HTML template for editor preview.
+ * Coerces an attribute value into a display string, mirroring the PHP
+ * renderer's AI_Block_Renderer::stringify().
  *
- * @param {string} template HTML template string.
+ * @param {*} val Attribute value.
+ * @return {string} Display-safe string form of the value.
+ */
+function stringify( val ) {
+	if ( typeof val === 'boolean' ) {
+		return val ? '1' : '0';
+	}
+	if ( val === undefined || val === null ) {
+		return '';
+	}
+	if ( Array.isArray( val ) ) {
+		return val.map( String ).join( ', ' );
+	}
+	return String( val );
+}
+
+/**
+ * Very small allowlist-based CSS value sanitizer for values landing inside a
+ * `style="..."` attribute. Mirrors the intent of PHP's safecss_filter_attr():
+ * block known XSS vectors without trying to be a full CSS parser.
+ *
+ * @param {string} value Raw CSS value.
+ * @return {string} Sanitized CSS value.
+ */
+function sanitizeStyleValue( value ) {
+	return String( value )
+		.replace( /expression\s*\([^)]*\)/gi, '' )
+		.replace( /javascript\s*:/gi, '' )
+		.replace( /[<>"]/g, '' );
+}
+
+/**
+ * Escapes a value destined for a URL attribute (href/src), blocking
+ * javascript:/data: executable schemes while allowing normal URLs.
+ *
+ * @param {string} value Raw URL value.
+ * @return {string} Escaped URL, or an empty string if the scheme is disallowed.
+ */
+function sanitizeUrlValue( value ) {
+	const trimmed = String( value ).trim();
+	if ( /^\s*(javascript|vbscript):/i.test( trimmed ) ) {
+		return '';
+	}
+	return escapeAttribute( trimmed );
+}
+
+/**
+ * Interpolates attributes into HTML template for editor preview, with
+ * context-aware escaping matching the PHP renderer (AI_Block_Renderer).
+ *
+ * @param {string} template   HTML template string.
  * @param {Object} attributes Current block attributes.
- * @return {string}
+ * @return {string} Interpolated HTML.
  */
 export function interpolateTemplate( template, attributes ) {
 	if ( ! template ) {
@@ -30,20 +90,25 @@ export function interpolateTemplate( template, attributes ) {
 
 	let html = template;
 
-	// Process conditional blocks: {{#if isFeatured}}...{{/if}} or {{^if isFeatured}}...{{/if}}
-	html = html.replace(
-		/\{\{#if\s+([a-zA-Z0-9_-]+)\}\}([\s\S]*?)\{\{\/if\}\}/g,
-		( match, key, content ) => {
-			return attributes[ key ] ? content : '';
-		}
-	);
+	// Raw variables: {{{key}}}. MUST run before the {{key}} pass below, since
+	// {{{x}}} contains a valid {{x}} match that would otherwise be consumed
+	// first, leaving stray braces behind.
+	html = html.replace( /\{\{\{([a-zA-Z0-9_-]+)\}\}\}/g, ( match, key ) => {
+		const val = attributes[ key ];
+		// The editor preview can't safely run PHP's wp_kses_post(); render
+		// raw HTML values as escaped text here instead of executing them,
+		// matching what a non-unfiltered_html author will see once the
+		// server-side kses pass (AI_Block_Store) has stripped active markup.
+		return val !== undefined && val !== null
+			? escapeHTML( stringify( val ) )
+			: '';
+	} );
 
-	html = html.replace(
-		/\{\{\^if\s+([a-zA-Z0-9_-]+)\}\}([\s\S]*?)\{\{\/if\}\}/g,
-		( match, key, content ) => {
-			return ! attributes[ key ] ? content : '';
-		}
-	);
+	// Process conditional blocks, supporting nesting of the same tag type via
+	// a small stack-based scanner (a plain regex pairs the first {{#if}}
+	// with the first {{/if}}, which breaks on nested conditionals).
+	html = processConditionals( html, attributes, '#if', true );
+	html = processConditionals( html, attributes, '^if', false );
 
 	// Process list repeaters: {{#list features}}<li>{{item}}</li>{{/list}}
 	html = html.replace(
@@ -60,50 +125,257 @@ export function interpolateTemplate( template, attributes ) {
 					.filter( Boolean );
 			}
 			return items
-				.map( ( item ) => itemTemplate.replace( /\{\{item\}\}/g, item ) )
+				.map( ( item ) => {
+					const itemStr =
+						typeof item === 'object'
+							? JSON.stringify( item )
+							: String( item );
+					return itemTemplate.replace(
+						/\{\{item\}\}/g,
+						escapeHTML( itemStr )
+					);
+				} )
 				.join( '' );
 		}
 	);
 
-	// Replace variables: {{key}}
-	html = html.replace( /\{\{([a-zA-Z0-9_-]+)\}\}/g, ( match, key ) => {
-		const val = attributes[ key ];
-		if ( typeof val === 'boolean' ) {
-			return val ? '1' : '0';
+	// Replace variables: {{key}}, escaped according to the attribute context
+	// each placeholder appears in (href/src → URL, style="" → CSS value,
+	// everything else → HTML text/attribute escaping).
+	html = html.replace(
+		/(?:(href|src)=")\{\{([a-zA-Z0-9_-]+)\}\}"|(?:style=")([^"]*)\{\{([a-zA-Z0-9_-]+)\}\}([^"]*)"|\{\{([a-zA-Z0-9_-]+)\}\}/g,
+		(
+			match,
+			urlAttr,
+			urlKey,
+			stylePrefix,
+			styleKey,
+			styleSuffix,
+			plainKey
+		) => {
+			if ( urlAttr && urlKey !== undefined ) {
+				return `${ urlAttr }="${ sanitizeUrlValue(
+					stringify( attributes[ urlKey ] )
+				) }"`;
+			}
+			if ( styleKey ) {
+				return `style="${ stylePrefix }${ sanitizeStyleValue(
+					stringify( attributes[ styleKey ] )
+				) }${ styleSuffix }"`;
+			}
+			const val = attributes[ plainKey ];
+			if ( val === undefined ) {
+				return '';
+			}
+			return escapeHTML( stringify( val ) );
 		}
-		if ( val === undefined || val === null ) {
-			return '';
-		}
-		return String( val );
-	} );
-
-	// Raw variables: {{{key}}}
-	html = html.replace( /\{\{\{([a-zA-Z0-9_-]+)\}\}\}/g, ( match, key ) => {
-		const val = attributes[ key ];
-		return val !== undefined && val !== null ? String( val ) : '';
-	} );
+	);
 
 	return html;
 }
 
 /**
- * Injects block scoped CSS into document head.
+ * Stack-based processor for {{#if x}}...{{/if}} / {{^if x}}...{{/if}}
+ * blocks, supporting arbitrary nesting of the same tag type. Mirrors
+ * AI_Block_Renderer::process_conditionals() in PHP.
+ *
+ * @param {string}  template       Template containing the tag pairs.
+ * @param {Object}  attributes     Attribute values.
+ * @param {string}  openTag        '#if' or '^if'.
+ * @param {boolean} showWhenTruthy True to keep inner content when the attribute is truthy (#if), false for ^if.
+ * @return {string} Template with conditionals resolved.
+ */
+function processConditionals( template, attributes, openTag, showWhenTruthy ) {
+	const openNeedle = `{{${ openTag } `;
+	if ( ! template.includes( openNeedle ) ) {
+		return template;
+	}
+
+	const openRe = new RegExp(
+		`\\{\\{${ openTag.replace(
+			/[.*+?^${}()|[\]\\]/g,
+			'\\$&'
+		) }\\s+([a-zA-Z0-9_-]+)\\}\\}`
+	);
+	const closeTag = '{{/if}}';
+
+	let result = '';
+	let cursor = 0;
+
+	while ( cursor < template.length ) {
+		const rest = template.slice( cursor );
+		const match = rest.match( openRe );
+		if ( ! match ) {
+			result += rest;
+			break;
+		}
+
+		const offset = cursor + match.index;
+		const varName = match[ 1 ];
+		const bodyStart = offset + match[ 0 ].length;
+
+		result += template.slice( cursor, offset );
+
+		let depth = 1;
+		let search = bodyStart;
+		let closePos = template.length;
+
+		while ( depth > 0 ) {
+			const nextOpen = template.indexOf( openNeedle, search );
+			const nextClose = template.indexOf( closeTag, search );
+
+			if ( nextClose === -1 ) {
+				closePos = template.length;
+				depth = 0;
+				break;
+			}
+
+			if ( nextOpen !== -1 && nextOpen < nextClose ) {
+				depth++;
+				search = nextOpen + openNeedle.length;
+			} else {
+				depth--;
+				search = nextClose + closeTag.length;
+				if ( depth === 0 ) {
+					closePos = nextClose;
+				}
+			}
+		}
+
+		const body = template.slice( bodyStart, closePos );
+		const isTruthy = Boolean( attributes[ varName ] );
+
+		if ( isTruthy === showWhenTruthy ) {
+			result += processConditionals(
+				body,
+				attributes,
+				openTag,
+				showWhenTruthy
+			);
+		}
+
+		cursor = closePos + closeTag.length;
+	}
+
+	return result;
+}
+
+/**
+ * Injects block scoped CSS into the document head — both the admin's own
+ * document, and (when present) the block editor canvas iframe's document,
+ * since apiVersion 3 blocks render inside an iframe and a <style> appended
+ * only to the top-level document never reaches them.
  *
  * @param {string} blockName Name of block.
- * @param {string} css CSS string.
+ * @param {string} css       CSS string.
  */
 export function injectBlockStyles( blockName, css ) {
 	if ( ! css ) {
 		return;
 	}
-	const styleId = `ai-block-style-${ blockName.replace( /[^a-zA-Z0-9_-]/g, '-' ) }`;
-	let styleEl = document.getElementById( styleId );
-	if ( ! styleEl ) {
-		styleEl = document.createElement( 'style' );
-		styleEl.id = styleId;
-		document.head.appendChild( styleEl );
+
+	const styleId = `ai-block-style-${ blockName.replace(
+		/[^a-zA-Z0-9_-]/g,
+		'-'
+	) }`;
+
+	const targets = [ document ];
+	const canvasIframe = document.querySelector(
+		'iframe[name="editor-canvas"]'
+	);
+	if ( canvasIframe && canvasIframe.contentDocument ) {
+		targets.push( canvasIframe.contentDocument );
 	}
-	styleEl.textContent = css;
+
+	targets.forEach( ( doc ) => {
+		let styleEl = doc.getElementById( styleId );
+		if ( ! styleEl ) {
+			styleEl = doc.createElement( 'style' );
+			styleEl.id = styleId;
+			doc.head.appendChild( styleEl );
+		}
+		styleEl.textContent = css;
+	} );
+}
+
+/**
+ * Renders a single inspector control for an edit_fields entry. Shared
+ * between the live block inspector and the creation-modal preview panel so
+ * both offer the same control types.
+ *
+ * @param {Object}   field    Edit field definition ({ name, label, type, options? }).
+ * @param {*}        value    Current value.
+ * @param {Function} onChange Called with the new value.
+ * @param {Array}    colors   Optional theme color palette for `color` fields.
+ * @return {Object} Element.
+ */
+export function renderEditField( field, value, onChange, colors ) {
+	const fieldKey = field.name;
+
+	switch ( field.type ) {
+		case 'toggle':
+		case 'boolean':
+			return createElement( ToggleControl, {
+				key: fieldKey,
+				label: field.label || fieldKey,
+				checked: Boolean( value ),
+				onChange,
+			} );
+
+		case 'textarea':
+			return createElement( TextareaControl, {
+				key: fieldKey,
+				label: field.label || fieldKey,
+				value: value || '',
+				rows: 4,
+				onChange,
+			} );
+
+		case 'color':
+			return createElement(
+				'div',
+				{ key: fieldKey, className: 'ai-block-color-field' },
+				createElement(
+					'label',
+					{ className: 'components-base-control__label' },
+					field.label || fieldKey
+				),
+				createElement( ColorPalette, {
+					colors: colors || undefined,
+					value: value || '#3b82f6',
+					onChange: ( val ) => onChange( val || '' ),
+				} )
+			);
+
+		case 'number':
+			return createElement( RangeControl, {
+				key: fieldKey,
+				label: field.label || fieldKey,
+				value: Number( value ) || 0,
+				min: field.min !== undefined ? field.min : 0,
+				max: field.max !== undefined ? field.max : 100,
+				onChange,
+			} );
+
+		case 'select':
+			return createElement( SelectControl, {
+				key: fieldKey,
+				label: field.label || fieldKey,
+				value,
+				options: field.options || [],
+				onChange,
+			} );
+
+		case 'text':
+		case 'url':
+		default:
+			return createElement( TextControl, {
+				key: fieldKey,
+				label: field.label || fieldKey,
+				value: value || '',
+				onChange,
+			} );
+	}
 }
 
 /**
@@ -129,7 +401,7 @@ export function registerDynamicAiBlock( blockDef ) {
 	// Unregister if previously registered to allow hot reloading / updating.
 	if ( getBlockType( blockName ) ) {
 		try {
-			wp.blocks.unregisterBlockType( blockName );
+			unregisterBlockType( blockName );
 		} catch ( e ) {
 			// Ignore if unregister fails.
 		}
@@ -147,13 +419,19 @@ export function registerDynamicAiBlock( blockDef ) {
 		} );
 	}
 
-	const editFields = Array.isArray( blockDef.edit_fields )
-		? blockDef.edit_fields
-		: Object.keys( attributes ).map( ( key ) => ( {
-				name: key,
-				label: key.replace( /([A-Z])/g, ' $1' ).replace( /^./, ( str ) => str.toUpperCase() ),
-				type: attributes[ key ].type === 'boolean' ? 'toggle' : 'text',
-		  } ) );
+	const editFields =
+		Array.isArray( blockDef.edit_fields ) && blockDef.edit_fields.length
+			? blockDef.edit_fields
+			: Object.keys( attributes ).map( ( key ) => ( {
+					name: key,
+					label: key
+						.replace( /([A-Z])/g, ' $1' )
+						.replace( /^./, ( str ) => str.toUpperCase() ),
+					type:
+						attributes[ key ].type === 'boolean'
+							? 'toggle'
+							: 'text',
+			  } ) );
 
 	const blockConfig = {
 		apiVersion: 3,
@@ -169,9 +447,17 @@ export function registerDynamicAiBlock( blockDef ) {
 			customClassName: true,
 		},
 		edit: function Edit( props ) {
-			const { attributes: currentAttrs, setAttributes, className } = props;
+			const {
+				attributes: currentAttrs,
+				setAttributes,
+				className,
+			} = props;
+			const [ themeColors ] = useSettings( 'color.palette' );
 			const blockProps = useBlockProps( {
-				className: `ai-custom-block ai-block-${ blockName.replace( 'ai-block/', '' ) } ${ className || '' }`,
+				className: `ai-custom-block ai-block-${ blockName.replace(
+					'ai-block/',
+					''
+				) } ${ className || '' }`,
 			} );
 
 			// Render Inspector Controls for attributes
@@ -180,79 +466,34 @@ export function registerDynamicAiBlock( blockDef ) {
 				null,
 				createElement(
 					PanelBody,
-					{ title: `${ blockDef.title } Settings`, initialOpen: true },
+					{
+						title: `${ blockDef.title } Settings`,
+						initialOpen: true,
+					},
 					editFields.map( ( field ) => {
 						const fieldKey = field.name;
-						const fieldValue = currentAttrs[ fieldKey ] !== undefined
-							? currentAttrs[ fieldKey ]
-							: ( blockDef.attributes[ fieldKey ]?.default ?? '' );
+						const fieldValue =
+							currentAttrs[ fieldKey ] !== undefined
+								? currentAttrs[ fieldKey ]
+								: blockDef.attributes?.[ fieldKey ]?.default ??
+								  '';
 
-						switch ( field.type ) {
-							case 'toggle':
-							case 'boolean':
-								return createElement( ToggleControl, {
-									key: fieldKey,
-									label: field.label || fieldKey,
-									checked: Boolean( fieldValue ),
-									onChange: ( val ) => setAttributes( { [ fieldKey ]: val } ),
-								} );
-
-							case 'textarea':
-								return createElement( TextareaControl, {
-									key: fieldKey,
-									label: field.label || fieldKey,
-									value: fieldValue || '',
-									rows: 4,
-									onChange: ( val ) => setAttributes( { [ fieldKey ]: val } ),
-								} );
-
-							case 'color':
-								return createElement(
-									'div',
-									{ key: fieldKey, className: 'ai-block-color-field' },
-									createElement( 'label', { className: 'components-base-control__label' }, field.label || fieldKey ),
-									createElement( ColorPalette, {
-										value: fieldValue || '#3b82f6',
-										onChange: ( val ) => setAttributes( { [ fieldKey ]: val || '' } ),
-									} )
-								);
-
-							case 'number':
-								return createElement( RangeControl, {
-									key: fieldKey,
-									label: field.label || fieldKey,
-									value: Number( fieldValue ) || 0,
-									min: field.min !== undefined ? field.min : 0,
-									max: field.max !== undefined ? field.max : 100,
-									onChange: ( val ) => setAttributes( { [ fieldKey ]: val } ),
-								} );
-
-							case 'select':
-								return createElement( SelectControl, {
-									key: fieldKey,
-									label: field.label || fieldKey,
-									value: fieldValue,
-									options: field.options || [],
-									onChange: ( val ) => setAttributes( { [ fieldKey ]: val } ),
-								} );
-
-							case 'text':
-							case 'url':
-							default:
-								return createElement( TextControl, {
-									key: fieldKey,
-									label: field.label || fieldKey,
-									value: fieldValue || '',
-									onChange: ( val ) => setAttributes( { [ fieldKey ]: val } ),
-								} );
-						}
+						return renderEditField(
+							field,
+							fieldValue,
+							( val ) => setAttributes( { [ fieldKey ]: val } ),
+							themeColors
+						);
 					} )
 				)
 			);
 
 			// Render preview HTML
 			const renderedHtml = useMemo( () => {
-				return interpolateTemplate( blockDef.render_html, currentAttrs );
+				return interpolateTemplate(
+					blockDef.render_html,
+					currentAttrs
+				);
 			}, [ currentAttrs ] );
 
 			return createElement(
@@ -268,6 +509,9 @@ export function registerDynamicAiBlock( blockDef ) {
 	try {
 		return registerBlockType( blockName, blockConfig );
 	} catch ( err ) {
+		// Surface block-registration failures (e.g. a malformed AI-generated
+		// definition) to the console so they're debuggable, not silently lost.
+		// eslint-disable-next-line no-console
 		console.error( 'Error registering dynamic AI block:', err );
 		return null;
 	}

@@ -2,17 +2,17 @@
  * AI Block Creator Main Modal & Conversational Interface.
  */
 
-import { useState, useEffect } from '@wordpress/element';
+import { useState } from '@wordpress/element';
 import {
 	Modal,
 	Button,
 	Spinner,
 	Notice,
 	TextareaControl,
-	ButtonGroup,
 } from '@wordpress/components';
 import { useDispatch } from '@wordpress/data';
 import { createBlock } from '@wordpress/blocks';
+import { __, sprintf } from '@wordpress/i18n';
 import apiFetch from '@wordpress/api-fetch';
 import VoiceInput from './VoiceInput';
 import ImageDropzone from './ImageDropzone';
@@ -20,32 +20,93 @@ import BlockPreview from './BlockPreview';
 import { registerDynamicAiBlock } from '../runtime/dynamic-block-factory';
 
 const SUGGESTIONS = [
-	{ label: '⚡ Pricing Table (3 tiers)', prompt: 'Create a modern, responsive 3-tier pricing comparison table with a highlighted popular plan, feature checklists, and CTA buttons.' },
-	{ label: '⭐ Testimonial Card', prompt: 'Create a customer testimonial card with 5 star ratings, customer avatar, quote, author name, role, and company logo placeholder.' },
-	{ label: '❓ FAQ Accordion', prompt: 'Create an interactive FAQ accordion with expandable question panels, smooth chevron indicator, and styled answer section.' },
-	{ label: '👤 Speaker / Author Bio', prompt: 'Create a speaker bio card with circular profile image, bio paragraph, social media link badges, and topic tags.' },
-	{ label: '🚀 Feature Grid', prompt: 'Create a 3-column feature highlight card grid with colorful icon badges, feature titles, and brief descriptions.' },
-	{ label: '📊 Stats Counter Banner', prompt: 'Create an impressive statistics / milestone banner with 4 metrics, large bold numbers, and subtitle labels on a dark gradient background.' },
+	{
+		label: '⚡ Pricing Table (3 tiers)',
+		prompt: 'Create a modern, responsive 3-tier pricing comparison table with a highlighted popular plan, feature checklists, and CTA buttons.',
+	},
+	{
+		label: '⭐ Testimonial Card',
+		prompt: 'Create a customer testimonial card with 5 star ratings, customer avatar, quote, author name, role, and company logo placeholder.',
+	},
+	{
+		label: '❓ FAQ Accordion',
+		prompt: 'Create an interactive FAQ accordion with expandable question panels, smooth chevron indicator, and styled answer section.',
+	},
+	{
+		label: '👤 Speaker / Author Bio',
+		prompt: 'Create a speaker bio card with circular profile image, bio paragraph, social media link badges, and topic tags.',
+	},
+	{
+		label: '🚀 Feature Grid',
+		prompt: 'Create a 3-column feature highlight card grid with colorful icon badges, feature titles, and brief descriptions.',
+	},
+	{
+		label: '📊 Stats Counter Banner',
+		prompt: 'Create an impressive statistics / milestone banner with 4 metrics, large bold numbers, and subtitle labels on a dark gradient background.',
+	},
 ];
 
-export default function AIBlockCreatorModal( { isOpen, onClose, onBlockCreated } ) {
-	const [ prompt, setPrompt ] = useState( '' );
-	const [ screenshot, setScreenshot ] = useState( null );
-	const [ isGenerating, setIsGenerating ] = useState( false );
-	const [ error, setError ] = useState( null );
-	const [ currentBlock, setCurrentBlock ] = useState( null );
-	const [ conversation, setConversation ] = useState( [] );
-	const [ isSaving, setIsSaving ] = useState( false );
-	const [ saveSuccess, setSaveSuccess ] = useState( false );
+const INITIAL_STATE = {
+	prompt: '',
+	screenshot: null,
+	error: null,
+	currentBlock: null,
+	conversation: [],
+	saveSuccess: false,
+};
 
-	const { insertBlocks } = useDispatch( 'core/block-editor' );
+export default function AIBlockCreatorModal( {
+	isOpen,
+	onClose,
+	placeholderClientId,
+} ) {
+	const [ prompt, setPrompt ] = useState( INITIAL_STATE.prompt );
+	const [ screenshot, setScreenshot ] = useState( INITIAL_STATE.screenshot );
+	const [ isGenerating, setIsGenerating ] = useState( false );
+	const [ error, setError ] = useState( INITIAL_STATE.error );
+	const [ currentBlock, setCurrentBlock ] = useState(
+		INITIAL_STATE.currentBlock
+	);
+	const [ conversation, setConversation ] = useState(
+		INITIAL_STATE.conversation
+	);
+	const [ isSaving, setIsSaving ] = useState( false );
+	const [ saveSuccess, setSaveSuccess ] = useState(
+		INITIAL_STATE.saveSuccess
+	);
+
+	const { insertBlocks, replaceBlocks, removeBlock } =
+		useDispatch( 'core/block-editor' );
 
 	if ( ! isOpen ) {
 		return null;
 	}
 
+	const settings = window.aiBlockCreatorSettings || {};
+	const aiAvailable = settings.hasAiClient && settings.aiSupported !== false;
+	const canManageLibrary = settings.canManageLibrary !== false;
+
+	const resetState = () => {
+		setPrompt( INITIAL_STATE.prompt );
+		setScreenshot( INITIAL_STATE.screenshot );
+		setError( INITIAL_STATE.error );
+		setCurrentBlock( INITIAL_STATE.currentBlock );
+		setConversation( INITIAL_STATE.conversation );
+		setSaveSuccess( INITIAL_STATE.saveSuccess );
+	};
+
+	const handleClose = () => {
+		if ( placeholderClientId ) {
+			removeBlock( placeholderClientId );
+		}
+		resetState();
+		onClose();
+	};
+
 	const handleVoiceTranscript = ( transcript ) => {
-		setPrompt( ( prev ) => ( prev ? `${ prev } ${ transcript }` : transcript ) );
+		setPrompt( ( prev ) =>
+			prev ? `${ prev } ${ transcript }` : transcript
+		);
 	};
 
 	const handleGenerate = async ( customPrompt ) => {
@@ -60,25 +121,26 @@ export default function AIBlockCreatorModal( { isOpen, onClose, onBlockCreated }
 
 		const userMessage = {
 			role: 'user',
-			content: targetPrompt + ( screenshot ? ' [Attached screenshot]' : '' ),
+			content:
+				targetPrompt ||
+				__( '[Screenshot attached]', 'ai-block-creator' ),
 			hasImage: Boolean( screenshot ),
 		};
 
 		setConversation( ( prev ) => [ ...prev, userMessage ] );
 
 		try {
-			const settings = window.aiBlockCreatorSettings || {};
 			const response = await apiFetch( {
 				path: '/ai-block-creator/v1/generate',
 				method: 'POST',
 				data: {
 					prompt: targetPrompt,
 					image: screenshot,
-					history: conversation,
+					history: conversation.map( ( { role, content } ) => ( {
+						role,
+						content,
+					} ) ),
 					current_block: currentBlock,
-				},
-				headers: {
-					'X-WP-Nonce': settings.nonce || '',
 				},
 			} );
 
@@ -88,127 +150,167 @@ export default function AIBlockCreatorModal( { isOpen, onClose, onBlockCreated }
 					...prev,
 					{
 						role: 'assistant',
-						content: `Generated custom block "${ response.block.title }".`,
-						block: response.block,
+						content: sprintf(
+							// translators: %s: generated block title.
+							__(
+								'Generated custom block "%s".',
+								'ai-block-creator'
+							),
+							response.block.title
+						),
 					},
 				] );
-				// Clear prompt for next conversational refinement
+				// Clear prompt for next conversational refinement.
 				setPrompt( '' );
 			} else {
-				throw new Error( 'No block definition returned from server.' );
+				throw new Error(
+					__(
+						'No block definition returned from server.',
+						'ai-block-creator'
+					)
+				);
 			}
 		} catch ( err ) {
-			console.error( 'AI Block Generation error:', err );
-			setError( err.message || 'Failed to generate block. Please try again.' );
+			setError(
+				err.message ||
+					__(
+						'Failed to generate block. Please try again.',
+						'ai-block-creator'
+					)
+			);
 		} finally {
 			setIsGenerating( false );
 		}
 	};
 
-	const handleInsertIntoPost = async () => {
+	/**
+	 * Persists the current block definition to the server library, then runs
+	 * a caller-supplied follow-up with the server's normalized response
+	 * (which is authoritative — its slug/name may differ from what the
+	 * client holds if e.g. a slug collision forced a rename).
+	 *
+	 * @param {Function} onSaved Called with the saved block definition.
+	 */
+	const persistBlock = async ( onSaved ) => {
 		if ( ! currentBlock ) {
 			return;
 		}
 
 		setIsSaving( true );
+		setError( null );
 		try {
-			// Register in client-side Gutenberg runtime immediately
-			registerDynamicAiBlock( currentBlock );
-
-			// Persist block definition to server
-			const settings = window.aiBlockCreatorSettings || {};
-			await apiFetch( {
+			const response = await apiFetch( {
 				path: '/ai-block-creator/v1/blocks',
 				method: 'POST',
 				data: {
 					block_definition: currentBlock,
 				},
-				headers: {
-					'X-WP-Nonce': settings.nonce || '',
-				},
 			} );
 
-			// Prepare default attributes
+			const savedBlock = response?.block || currentBlock;
+			registerDynamicAiBlock( savedBlock );
+			onSaved( savedBlock );
+		} catch ( err ) {
+			setError(
+				sprintf(
+					// translators: %s: error message from the server.
+					__( 'Failed to save block: %s', 'ai-block-creator' ),
+					err.message || ''
+				)
+			);
+		} finally {
+			setIsSaving( false );
+		}
+	};
+
+	const handleInsertIntoPost = () =>
+		persistBlock( ( savedBlock ) => {
 			const initialAttrs = {};
-			if ( currentBlock.attributes ) {
-				Object.keys( currentBlock.attributes ).forEach( ( k ) => {
-					initialAttrs[ k ] = currentBlock.attributes[ k ]?.default ?? '';
+			if ( savedBlock.attributes ) {
+				Object.keys( savedBlock.attributes ).forEach( ( k ) => {
+					initialAttrs[ k ] =
+						savedBlock.attributes[ k ]?.default ?? '';
 				} );
 			}
 
-			// Create and insert block instance into editor canvas
-			const blockInstance = createBlock( currentBlock.name, initialAttrs );
-			insertBlocks( blockInstance );
+			const blockInstance = createBlock( savedBlock.name, initialAttrs );
 
-			if ( onBlockCreated ) {
-				onBlockCreated( currentBlock );
+			if ( placeholderClientId ) {
+				replaceBlocks( placeholderClientId, blockInstance );
+			} else {
+				insertBlocks( blockInstance );
 			}
 
+			resetState();
 			onClose();
-		} catch ( err ) {
-			console.error( 'Failed to save/insert block:', err );
-			setError( 'Failed to save block to server: ' + ( err.message || '' ) );
-		} finally {
-			setIsSaving( false );
-		}
-	};
+		} );
 
-	const handleSaveToLibrary = async () => {
-		if ( ! currentBlock ) {
-			return;
-		}
+	const handleSaveToLibrary = () =>
+		persistBlock( () => setSaveSuccess( true ) );
 
-		setIsSaving( true );
-		try {
-			registerDynamicAiBlock( currentBlock );
-
-			const settings = window.aiBlockCreatorSettings || {};
-			await apiFetch( {
-				path: '/ai-block-creator/v1/blocks',
-				method: 'POST',
-				data: {
-					block_definition: currentBlock,
-				},
-				headers: {
-					'X-WP-Nonce': settings.nonce || '',
-				},
-			} );
-
-			setSaveSuccess( true );
-			if ( onBlockCreated ) {
-				onBlockCreated( currentBlock );
-			}
-		} catch ( err ) {
-			console.error( 'Failed to save block:', err );
-			setError( 'Failed to save block: ' + ( err.message || '' ) );
-		} finally {
-			setIsSaving( false );
-		}
-	};
+	const generateButtonLabel = currentBlock
+		? '✨ ' + __( 'Refine Block', 'ai-block-creator' )
+		: '✨ ' + __( 'Generate Block', 'ai-block-creator' );
 
 	return (
 		<Modal
 			title={
 				<div className="ai-modal-header-title">
 					<span className="ai-sparkle-badge">✨</span>
-					<span>AI Block Creator</span>
-					<span className="ai-modal-tagline">Speak, type, or screenshot blocks into existence</span>
+					<span>
+						{ __( 'AI Block Creator', 'ai-block-creator' ) }
+					</span>
+					<span className="ai-modal-tagline">
+						{ __(
+							'Speak, type, or screenshot blocks into existence',
+							'ai-block-creator'
+						) }
+					</span>
 				</div>
 			}
-			onRequestClose={ onClose }
+			onRequestClose={ handleClose }
 			className="ai-block-creator-modal"
 			isFullScreen={ false }
 		>
 			<div className="ai-block-creator-container">
+				{ ! aiAvailable && (
+					<Notice status="warning" isDismissible={ false }>
+						{ __(
+							'No AI provider is currently configured for this site. Ask an administrator to connect one in Settings before generating blocks.',
+							'ai-block-creator'
+						) }
+					</Notice>
+				) }
+
+				{ ! canManageLibrary && (
+					<Notice status="info" isDismissible={ false }>
+						{ __(
+							'You can generate and preview blocks, but saving them to the library requires additional permissions. Ask an administrator to save this block for you.',
+							'ai-block-creator'
+						) }
+					</Notice>
+				) }
+
 				{ error && (
-					<Notice status="error" isDismissible={ false } className="ai-error-notice">
+					<Notice
+						status="error"
+						isDismissible={ false }
+						className="ai-error-notice"
+					>
 						{ error }
 					</Notice>
 				) }
 
 				{ saveSuccess && (
-					<Notice status="success" isDismissible={ true } onDismiss={ () => setSaveSuccess( false ) }>
-						Custom block successfully saved to library! It is now available in your block inserter.
+					<Notice
+						status="success"
+						isDismissible={ true }
+						onDismiss={ () => setSaveSuccess( false ) }
+					>
+						{ __(
+							'Custom block successfully saved to library! It is now available in your block inserter.',
+							'ai-block-creator'
+						) }
 					</Notice>
 				) }
 
@@ -216,8 +318,18 @@ export default function AIBlockCreatorModal( { isOpen, onClose, onBlockCreated }
 				{ conversation.length > 0 && (
 					<div className="ai-conversation-thread">
 						{ conversation.map( ( msg, idx ) => (
-							<div key={ idx } className={ `ai-chat-bubble is-${ msg.role }` }>
-								<span className="ai-chat-role">{ msg.role === 'user' ? 'You' : 'AI Assistant' }</span>
+							<div
+								key={ idx }
+								className={ `ai-chat-bubble is-${ msg.role }` }
+							>
+								<span className="ai-chat-role">
+									{ msg.role === 'user'
+										? __( 'You', 'ai-block-creator' )
+										: __(
+												'AI Assistant',
+												'ai-block-creator'
+										  ) }
+								</span>
 								<p className="ai-chat-text">{ msg.content }</p>
 							</div>
 						) ) }
@@ -230,7 +342,9 @@ export default function AIBlockCreatorModal( { isOpen, onClose, onBlockCreated }
 					<div className="ai-prompt-column">
 						{ ! currentBlock && (
 							<div className="ai-suggestions-section">
-								<span className="ai-section-label">Quick Ideas:</span>
+								<span className="ai-section-label">
+									{ __( 'Quick Ideas:', 'ai-block-creator' ) }
+								</span>
 								<div className="ai-suggestions-list">
 									{ SUGGESTIONS.map( ( item, i ) => (
 										<button
@@ -241,7 +355,9 @@ export default function AIBlockCreatorModal( { isOpen, onClose, onBlockCreated }
 												setPrompt( item.prompt );
 												handleGenerate( item.prompt );
 											} }
-											disabled={ isGenerating }
+											disabled={
+												isGenerating || ! aiAvailable
+											}
 										>
 											{ item.label }
 										</button>
@@ -252,16 +368,34 @@ export default function AIBlockCreatorModal( { isOpen, onClose, onBlockCreated }
 
 						<div className="ai-input-card">
 							<TextareaControl
-								label={ currentBlock ? '💬 Refine your block:' : '📝 Describe the block you want to create:' }
+								label={
+									currentBlock
+										? '💬 ' +
+										  __(
+												'Refine your block:',
+												'ai-block-creator'
+										  )
+										: '📝 ' +
+										  __(
+												'Describe the block you want to create:',
+												'ai-block-creator'
+										  )
+								}
 								value={ prompt }
 								onChange={ setPrompt }
 								placeholder={
 									currentBlock
-										? 'e.g. "Add a price badge", "Make the button blue with gradient", "Add dark background"...'
-										: 'e.g. "Create a pricing comparison table with 3 plans and a featured badge"...'
+										? __(
+												'e.g. "Add a price badge", "Make the button blue with gradient", "Add dark background"…',
+												'ai-block-creator'
+										  )
+										: __(
+												'e.g. "Create a pricing comparison table with 3 plans and a featured badge"…',
+												'ai-block-creator'
+										  )
 								}
 								rows={ 4 }
-								disabled={ isGenerating }
+								disabled={ isGenerating || ! aiAvailable }
 								className="ai-main-textarea"
 							/>
 
@@ -269,38 +403,56 @@ export default function AIBlockCreatorModal( { isOpen, onClose, onBlockCreated }
 								<div className="ai-multimodal-tools">
 									<VoiceInput
 										onTranscript={ handleVoiceTranscript }
-										disabled={ isGenerating }
+										disabled={
+											isGenerating || ! aiAvailable
+										}
 									/>
 									<ImageDropzone
 										image={ screenshot }
 										onImageChange={ setScreenshot }
-										disabled={ isGenerating }
+										disabled={
+											isGenerating || ! aiAvailable
+										}
 									/>
 								</div>
 
 								<Button
 									variant="primary"
 									onClick={ () => handleGenerate() }
-									disabled={ isGenerating || ( ! prompt && ! screenshot ) }
+									disabled={
+										isGenerating ||
+										! aiAvailable ||
+										( ! prompt && ! screenshot )
+									}
 									className="ai-generate-submit-btn"
 								>
 									{ isGenerating ? (
 										<>
 											<Spinner />
-											<span>Generating...</span>
+											<span>
+												{ __(
+													'Generating…',
+													'ai-block-creator'
+												) }
+											</span>
 										</>
-									) : currentBlock ? (
-										'✨ Refine Block'
 									) : (
-										'✨ Generate Block'
-									)}
+										generateButtonLabel
+									) }
 								</Button>
 							</div>
 						</div>
 
 						{ currentBlock && (
 							<div className="ai-refine-tips">
-								💡 <strong>Tip:</strong> Type follow-up instructions to refine styles, add attributes, or tweak layout without losing your current progress.
+								💡{ ' ' }
+								<strong>
+									{ __( 'Tip:', 'ai-block-creator' ) }
+								</strong>{ ' ' }
+								{ __(
+									'Type follow-up instructions to refine styles, add attributes, or tweak layout without losing your current progress.',
+									'ai-block-creator'
+								) }
 							</div>
 						) }
 					</div>
@@ -312,9 +464,21 @@ export default function AIBlockCreatorModal( { isOpen, onClose, onBlockCreated }
 						) : (
 							<div className="ai-preview-placeholder">
 								<div className="ai-placeholder-content">
-									<span className="ai-placeholder-icon">🎨</span>
-									<h4>Live Block Preview</h4>
-									<p>Type a description, dictate with your microphone, or paste a screenshot to watch your custom block come to life here.</p>
+									<span className="ai-placeholder-icon">
+										🎨
+									</span>
+									<h4>
+										{ __(
+											'Live Block Preview',
+											'ai-block-creator'
+										) }
+									</h4>
+									<p>
+										{ __(
+											'Type a description, dictate with your microphone, or paste a screenshot to watch your custom block come to life here.',
+											'ai-block-creator'
+										) }
+									</p>
 								</div>
 							</div>
 						) }
@@ -323,8 +487,12 @@ export default function AIBlockCreatorModal( { isOpen, onClose, onBlockCreated }
 
 				{ /* Modal Footer Actions */ }
 				<div className="ai-modal-footer">
-					<Button variant="tertiary" onClick={ onClose } disabled={ isGenerating || isSaving }>
-						Cancel
+					<Button
+						variant="tertiary"
+						onClick={ handleClose }
+						disabled={ isGenerating || isSaving }
+					>
+						{ __( 'Cancel', 'ai-block-creator' ) }
 					</Button>
 
 					{ currentBlock && (
@@ -332,17 +500,34 @@ export default function AIBlockCreatorModal( { isOpen, onClose, onBlockCreated }
 							<Button
 								variant="secondary"
 								onClick={ handleSaveToLibrary }
-								disabled={ isGenerating || isSaving }
+								disabled={
+									isGenerating ||
+									isSaving ||
+									! canManageLibrary
+								}
 							>
-								{ isSaving ? <Spinner /> : 'Save to Library' }
+								{ isSaving ? (
+									<Spinner />
+								) : (
+									__( 'Save to Library', 'ai-block-creator' )
+								) }
 							</Button>
 							<Button
 								variant="primary"
 								onClick={ handleInsertIntoPost }
-								disabled={ isGenerating || isSaving }
+								disabled={
+									isGenerating ||
+									isSaving ||
+									! canManageLibrary
+								}
 								className="ai-insert-btn"
 							>
-								{ isSaving ? <Spinner /> : '🚀 Insert into Post' }
+								{ isSaving ? (
+									<Spinner />
+								) : (
+									'🚀 ' +
+									__( 'Insert into Post', 'ai-block-creator' )
+								) }
 							</Button>
 						</div>
 					) }

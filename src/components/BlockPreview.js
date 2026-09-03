@@ -4,53 +4,77 @@
  */
 
 import { useState, useMemo, useEffect } from '@wordpress/element';
-import { TabPanel, TextControl, ToggleControl, TextareaControl, Button } from '@wordpress/components';
-import { interpolateTemplate, injectBlockStyles } from '../runtime/dynamic-block-factory';
+import { TabPanel } from '@wordpress/components';
+import { useSettings } from '@wordpress/block-editor';
+import { __ } from '@wordpress/i18n';
+import {
+	interpolateTemplate,
+	injectBlockStyles,
+	renderEditField,
+} from '../runtime/dynamic-block-factory';
+
+/**
+ * Builds the default attribute values for a block definition.
+ *
+ * @param {Object} blockDef Block definition.
+ * @return {Object} Map of attribute name to default value.
+ */
+function defaultsFor( blockDef ) {
+	const initial = {};
+	if ( blockDef?.attributes ) {
+		Object.keys( blockDef.attributes ).forEach( ( k ) => {
+			initial[ k ] = blockDef.attributes[ k ]?.default ?? '';
+		} );
+	}
+	return initial;
+}
 
 export default function BlockPreview( { blockDef } ) {
-	if ( ! blockDef ) {
-		return null;
-	}
+	const [ previewAttrs, setPreviewAttrs ] = useState( () =>
+		defaultsFor( blockDef )
+	);
+	const [ themeColors ] = useSettings( 'color.palette' );
 
-	// Initialize local attribute state with block defaults.
-	const [ previewAttrs, setPreviewAttrs ] = useState( () => {
-		const initial = {};
-		if ( blockDef.attributes ) {
-			Object.keys( blockDef.attributes ).forEach( ( k ) => {
-				initial[ k ] = blockDef.attributes[ k ]?.default ?? '';
-			} );
-		}
-		return initial;
-	} );
+	// Reset local attribute state whenever a new/refined definition arrives
+	// (e.g. after a refinement turn changes or renames attributes) — without
+	// this, previously-set attributes that no longer exist linger and newly
+	// added ones render with no value until the user touches every field.
+	useEffect( () => {
+		setPreviewAttrs( defaultsFor( blockDef ) );
+	}, [ blockDef ] );
 
 	// Inject styles into document when block definition updates.
 	useEffect( () => {
-		if ( blockDef.css && blockDef.name ) {
+		if ( blockDef?.css && blockDef?.name ) {
 			injectBlockStyles( blockDef.name, blockDef.css );
 		}
-	}, [ blockDef ] );
+	}, [ blockDef?.css, blockDef?.name ] );
 
 	// Interpolate HTML template with current preview attributes.
 	const renderedHtml = useMemo( () => {
-		return interpolateTemplate( blockDef.render_html, previewAttrs );
-	}, [ blockDef.render_html, previewAttrs ] );
+		return interpolateTemplate( blockDef?.render_html, previewAttrs );
+	}, [ blockDef?.render_html, previewAttrs ] );
+
+	if ( ! blockDef ) {
+		return null;
+	}
 
 	const editFields = blockDef.edit_fields || [];
 
 	const tabs = [
 		{
 			name: 'visual',
-			title: '✨ Live Preview',
+			title: '✨ ' + __( 'Live Preview', 'ai-block-creator' ),
 			className: 'ai-preview-tab-visual',
 		},
 		{
 			name: 'attributes',
-			title: '⚙️ Attributes & Controls',
+			title: '⚙️ ' + __( 'Attributes & Controls', 'ai-block-creator' ),
 			className: 'ai-preview-tab-attributes',
 		},
 		{
 			name: 'code',
-			title: '💻 Generated Code',
+			title: '💻 ' + __( 'Generated Code', 'ai-block-creator' ),
 			className: 'ai-preview-tab-code',
 		},
 	];
@@ -61,11 +85,18 @@ export default function BlockPreview( { blockDef } ) {
 				<div className="ai-block-preview-meta">
 					<span className="ai-block-preview-icon">✨</span>
 					<div>
-						<h3 className="ai-block-preview-title">{ blockDef.title || 'AI Custom Block' }</h3>
-						<span className="ai-block-preview-slug">{ blockDef.name }</span>
+						<h3 className="ai-block-preview-title">
+							{ blockDef.title ||
+								__( 'AI Custom Block', 'ai-block-creator' ) }
+						</h3>
+						<span className="ai-block-preview-slug">
+							{ blockDef.name }
+						</span>
 					</div>
 				</div>
-				<p className="ai-block-preview-desc">{ blockDef.description }</p>
+				<p className="ai-block-preview-desc">
+					{ blockDef.description }
+				</p>
 			</div>
 
 			<TabPanel
@@ -78,8 +109,12 @@ export default function BlockPreview( { blockDef } ) {
 						return (
 							<div className="ai-block-preview-visual-canvas">
 								<div
-									className={ `ai-custom-block ai-block-${ ( blockDef.name || '' ).replace( 'ai-block/', '' ) }` }
-									dangerouslySetInnerHTML={ { __html: renderedHtml } }
+									className={ `ai-custom-block ai-block-${ (
+										blockDef.name || ''
+									).replace( 'ai-block/', '' ) }` }
+									dangerouslySetInnerHTML={ {
+										__html: renderedHtml,
+									} }
 								/>
 							</div>
 						);
@@ -89,47 +124,24 @@ export default function BlockPreview( { blockDef } ) {
 						return (
 							<div className="ai-block-preview-attributes-panel">
 								<p className="ai-preview-hint">
-									Test how your block responds to attribute changes:
+									{ __(
+										'Test how your block responds to attribute changes:',
+										'ai-block-creator'
+									) }
 								</p>
 								<div className="ai-preview-fields-grid">
-									{ editFields.map( ( field ) => {
-										const val = previewAttrs[ field.name ];
-										if ( field.type === 'toggle' || field.type === 'boolean' ) {
-											return (
-												<ToggleControl
-													key={ field.name }
-													label={ field.label || field.name }
-													checked={ Boolean( val ) }
-													onChange={ ( checked ) =>
-														setPreviewAttrs( ( prev ) => ( { ...prev, [ field.name ]: checked } ) )
-													}
-												/>
-											);
-										}
-										if ( field.type === 'textarea' ) {
-											return (
-												<TextareaControl
-													key={ field.name }
-													label={ field.label || field.name }
-													value={ val || '' }
-													rows={ 3 }
-													onChange={ ( newVal ) =>
-														setPreviewAttrs( ( prev ) => ( { ...prev, [ field.name ]: newVal } ) )
-													}
-												/>
-											);
-										}
-										return (
-											<TextControl
-												key={ field.name }
-												label={ field.label || field.name }
-												value={ val || '' }
-												onChange={ ( newVal ) =>
-													setPreviewAttrs( ( prev ) => ( { ...prev, [ field.name ]: newVal } ) )
-												}
-											/>
-										);
-									} ) }
+									{ editFields.map( ( field ) =>
+										renderEditField(
+											field,
+											previewAttrs[ field.name ],
+											( val ) =>
+												setPreviewAttrs( ( prev ) => ( {
+													...prev,
+													[ field.name ]: val,
+												} ) ),
+											themeColors
+										)
+									) }
 								</div>
 							</div>
 						);
@@ -139,13 +151,27 @@ export default function BlockPreview( { blockDef } ) {
 						return (
 							<div className="ai-block-preview-code-panel">
 								<div className="ai-code-section">
-									<h4>HTML Template</h4>
-									<pre className="ai-code-block">{ blockDef.render_html }</pre>
+									<h4>
+										{ __(
+											'HTML Template',
+											'ai-block-creator'
+										) }
+									</h4>
+									<pre className="ai-code-block">
+										{ blockDef.render_html }
+									</pre>
 								</div>
 								{ blockDef.css && (
 									<div className="ai-code-section">
-										<h4>Scoped CSS</h4>
-										<pre className="ai-code-block">{ blockDef.css }</pre>
+										<h4>
+											{ __(
+												'Scoped CSS',
+												'ai-block-creator'
+											) }
+										</h4>
+										<pre className="ai-code-block">
+											{ blockDef.css }
+										</pre>
 									</div>
 								) }
 							</div>
