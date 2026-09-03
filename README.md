@@ -69,5 +69,21 @@ npm run build
 
 ---
 
+## 🤖 AI Disclosure & Model Contributions
+
+This project embraces collaborative AI-assisted development. Below is a log of models and their contributions to the codebase:
+
+### Gemini 3.7 Flash (Antigravity)
+* **Date**: September 2026
+* **Contributions**:
+  * Designed the initial plugin architecture and authored [`plans/architecture-and-design.md`](plans/architecture-and-design.md).
+  * Built the backend PHP dynamic renderer (`AI_Block_Renderer`) with template interpolation and scoped CSS injection.
+  * Implemented `AI_Block_REST_Controller` integrating with WordPress 7.0+ core `WordPress\AiClient\AiClient` and configuring `ModelConfig` (`enable_thinking: false`) for sub-4-second token generation.
+  * Built the Gutenberg editor extension: top toolbar button, block inserter card (`/ai-block`), Web Speech voice dictation, clipboard screenshot paste listener, and interactive live preview canvas with tabs.
+  * Created dynamic runtime factory (`dynamic-block-factory.js`) for instant client-side block registration.
+  * Authored `README.md`, `AGENTS.md`, `readme.txt`, and WordPress Playground `blueprint.json`.
+
+---
+
 ## 📄 License
 This project is licensed under the GPL-2.0-or-later License. See [LICENSE](LICENSE) for details.
