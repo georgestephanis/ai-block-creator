@@ -13,7 +13,7 @@
 		"networking": true
 	},
 	"login": true,
-	"landingPage": "/wp-admin/post-new.php",
+	"landingPage": "/wp-admin/options-connectors.php",
 	"steps": [
 		{
 			"step": "installPlugin",
@@ -29,11 +29,19 @@
 			"step": "installPlugin",
 			"pluginData": {
 				"resource": "git:directory",
-				"directory": "."
+				"url": "https://github.com/georgestephanis/ai-block-creator",
+				"ref": "trunk",
+				"refType": "branch",
+				"path": "/"
 			},
 			"options": {
 				"activate": true
 			}
+		},
+		{
+			"step": "writeFile",
+			"path": "/wordpress/wp-content/mu-plugins/ai-block-creator-demo-notice.php",
+			"data": "<?php\n/**\n * Playground demo notice: no OpenAI-compatible endpoint is safe to hardcode\n * as a default (any public one would be either unauthenticated, rate-limited\n * to uselessness, or a real key someone has to pay for), so this points the\n * visitor at Settings > Connectors instead of pretending generation works\n * out of the box.\n */\nadd_action( 'admin_notices', function () {\n\t$screen = get_current_screen();\n\tif ( $screen && 'options-connectors' === $screen->id ) {\n\t\treturn;\n\t}\n\tprintf(\n\t\t'<div class=\"notice notice-info\"><p>%s <a href=\"%s\">%s</a></p></div>',\n\t\tesc_html__( 'AI Block Creator needs an AI provider connected to generate blocks.', 'ai-block-creator' ),\n\t\tesc_url( admin_url( 'options-connectors.php' ) ),\n\t\tesc_html__( 'Connect one in Settings -> Connectors.', 'ai-block-creator' )\n\t);\n} );\n"
 		}
 	]
 }

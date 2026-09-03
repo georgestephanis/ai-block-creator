@@ -83,6 +83,17 @@ This project embraces collaborative AI-assisted development. Below is a log of m
   * Created dynamic runtime factory (`dynamic-block-factory.js`) for instant client-side block registration.
   * Authored `README.md`, `AGENTS.md`, `readme.txt`, and WordPress Playground `blueprint.json`.
 
+### Claude Fable 5.1 (Claude Code)
+* **Date**: September 2026
+* **Contributions**:
+  * Performed a full security and correctness review, written up in [`plans/code-review-2026-09-03.md`](plans/code-review-2026-09-03.md) and tracked in [`plans/TODO.md`](plans/TODO.md).
+  * Fixed an IDOR in `DELETE /blocks/{id}` that let any `edit_posts` user delete arbitrary posts on the site, and a stored-XSS path where a saved block's `render_html`/`css` reached every site visitor unsanitized; save/delete now require `unfiltered_html`, and both fields are validated through a new `AI_Block_Store` class before ever reaching post meta.
+  * Fixed renderer bugs in both `AI_Block_Renderer::render_template()` (PHP) and `interpolateTemplate()` (JS): triple-brace raw output, nested `{{#if}}` conditionals, and the block wrapper (`align`/`anchor`/`className` supports) silently never being applied on the front end. Interpolated values are now escaped by the attribute context they appear in (URL, CSS, or text) instead of one blanket escaper.
+  * Reworked the AI Client integration to use `wp_ai_client_prompt()` (so the request-timeout filter and `wp_supports_ai()` actually take effect), wire up conversation history via `withHistory()`, and request structured JSON via `asJsonResponse()`.
+  * Fixed several editor-side bugs: voice dictation aborting itself mid-sentence and duplicating words, the live preview panel going stale after a refinement turn, and the `/ai-block` slash-command placeholder losing its insertion point on insert.
+  * Set up PHPCS/WPCS (via Composer) and `@wordpress/scripts` JS/CSS linting, and brought the existing codebase to a clean pass under both.
+  * Added the missing `LICENSE` file, `uninstall.php`, and fixed `blueprint.json`'s invalid `git:directory` resource reference and lack of AI-provider setup guidance.
+
 ---
 
 ## 📄 License
