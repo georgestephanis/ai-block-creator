@@ -143,52 +143,37 @@ class AI_Block_REST_Controller extends WP_REST_Controller
             $user_content .= "\n\nCurrent Block Definition to Refine/Update:\n" . wp_json_encode($current_block, JSON_PRETTY_PRINT);
         }
 
-        // Build prompt with WP AI Client.
+        // Increase AI client request timeout for complex block generation.
+        add_filter('wp_ai_client_default_request_timeout', function () {
+            return 300.0;
+        });
+
+        // Build prompt with WP AI Client using ModelConfig.
         try {
-            $builder = wp_ai_client_prompt();
+            $model_config = new \WordPress\AiClient\Providers\Models\DTO\ModelConfig();
+            $model_config->setSystemInstruction($system_instructions);
+            $model_config->setCustomOption('chat_template_kwargs', array('enable_thinking' => false));
 
-            // Provide instructions.
-            $builder->using_system_instruction($system_instructions);
+            if (!empty($image) && is_string($image) && str_starts_with($image, 'data:image/')) {
+                // Multimodal prompt builder for screenshot input.
+                $builder = \WordPress\AiClient\AiClient::prompt();
+                $builder->usingModelConfig($model_config);
 
-            // Add history if any.
-            if (!empty($history) && is_array($history)) {
-                foreach ($history as $msg) {
-                    $role = ($msg['role'] ?? 'user') === 'assistant' ? 'assistant' : 'user';
-                    $text = is_string($msg['content'] ?? '') ? $msg['content'] : wp_json_encode($msg['content']);
-                    if ($role === 'user') {
-                        $builder->with_text("User: " . $text);
-                    } else {
-                        $builder->with_text("Assistant: " . $text);
+                if (preg_match('/^data:image\/(\w+);base64,(.+)$/', $image, $matches)) {
+                    $mime_type = 'image/' . $matches[1];
+                    $image_data = base64_decode($matches[2]);
+                    if ($image_data !== false) {
+                        $builder->withFile($image_data, $mime_type);
                     }
                 }
+                $builder->withText($user_content);
+                $result = $builder->generateTextResult();
+                $raw_text = $result->toText();
+            } else {
+                // Direct fast text generation.
+                $result = \WordPress\AiClient\AiClient::generateTextResult($user_content, $model_config);
+                $raw_text = $result->toText();
             }
-
-            // Handle image/screenshot if provided.
-            if (!empty($image) && is_string($image)) {
-                if (str_starts_with($image, 'data:image/')) {
-                    // Extract binary data from base64 data URI.
-                    if (preg_match('/^data:image\/(\w+);base64,(.+)$/', $image, $matches)) {
-                        $mime_type = 'image/' . $matches[1];
-                        $image_data = base64_decode($matches[2]);
-                        if ($image_data !== false) {
-                            $user_content .= "\n[Screenshot Attached: The block should replicate/interpret the UI design shown in the attached image]";
-                            $builder->with_file($image_data, $mime_type);
-                        }
-                    }
-                } elseif (filter_var($image, FILTER_VALIDATE_URL)) {
-                    $user_content .= "\n[Screenshot Attached URL: " . esc_url_raw($image) . "]";
-                }
-            }
-
-            $builder->with_text($user_content);
-
-            $response = $builder->generate_text();
-
-            if (is_wp_error($response)) {
-                return $response;
-            }
-
-            $raw_text = (string) $response;
             $parsed_json = $this->extract_json_from_response($raw_text);
 
             if (!$parsed_json) {
@@ -432,7 +417,7 @@ PROMPT;
         $def['id']   = $post_id;
         $def['name'] = 'ai-block/' . $slug;
 
-        update_post_meta($post_id, '_ai_block_definition', wp_json_encode($def));
+        update_post_meta($post_id, '_ai_block_definition', wp_slash(wp_json_encode($def)));
 
         return new WP_REST_Response(array(
             'success' => true,
