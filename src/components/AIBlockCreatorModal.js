@@ -11,13 +11,17 @@ import {
 	TextareaControl,
 } from '@wordpress/components';
 import { useDispatch } from '@wordpress/data';
-import { createBlock } from '@wordpress/blocks';
 import { __, sprintf } from '@wordpress/i18n';
 import apiFetch from '@wordpress/api-fetch';
 import VoiceInput from './VoiceInput';
 import ImageDropzone from './ImageDropzone';
 import BlockPreview from './BlockPreview';
-import { registerDynamicAiBlock } from '../runtime/dynamic-block-factory';
+import {
+	registerAiDefinition,
+	createBlocksFromDefinition,
+	kindOf,
+} from '../runtime/dynamic-block-factory';
+import { kindLabel, kindExplanation, alternativeKinds } from './kind-labels';
 import { notifyLibraryUpdated } from './BlockLibrarySidebar';
 
 const SUGGESTIONS = [
@@ -54,6 +58,8 @@ const INITIAL_STATE = {
 	currentBlock: null,
 	conversation: [],
 	saveSuccess: false,
+	plan: null,
+	lastPrompt: '',
 };
 
 export default function AIBlockCreatorModal( {
@@ -73,6 +79,8 @@ export default function AIBlockCreatorModal( {
 	const [ conversation, setConversation ] = useState(
 		INITIAL_STATE.conversation
 	);
+	const [ plan, setPlan ] = useState( INITIAL_STATE.plan );
+	const [ lastPrompt, setLastPrompt ] = useState( INITIAL_STATE.lastPrompt );
 	const [ isSaving, setIsSaving ] = useState( false );
 	const [ saveSuccess, setSaveSuccess ] = useState(
 		INITIAL_STATE.saveSuccess
@@ -124,6 +132,8 @@ export default function AIBlockCreatorModal( {
 		setCurrentBlock( INITIAL_STATE.currentBlock );
 		setConversation( INITIAL_STATE.conversation );
 		setSaveSuccess( INITIAL_STATE.saveSuccess );
+		setPlan( INITIAL_STATE.plan );
+		setLastPrompt( INITIAL_STATE.lastPrompt );
 	};
 
 	const handleClose = () => {
@@ -140,8 +150,17 @@ export default function AIBlockCreatorModal( {
 		);
 	};
 
-	const handleGenerate = async ( explicitPrompt = null ) => {
-		const targetPrompt = explicitPrompt || prompt;
+	/**
+	 * Runs a generation turn.
+	 *
+	 * @param {string|null} explicitPrompt Prompt to use instead of the textarea's contents.
+	 * @param {string|null} overrideKind   Kind to force, bypassing the planning stage.
+	 */
+	const handleGenerate = async (
+		explicitPrompt = null,
+		overrideKind = null
+	) => {
+		const targetPrompt = explicitPrompt || prompt || lastPrompt;
 		if ( ! targetPrompt && ! screenshot ) {
 			return;
 		}
@@ -149,6 +168,7 @@ export default function AIBlockCreatorModal( {
 		setIsGenerating( true );
 		setError( null );
 		setSaveSuccess( false );
+		setLastPrompt( targetPrompt );
 
 		const newConversation = [
 			...conversation,
@@ -171,7 +191,22 @@ export default function AIBlockCreatorModal( {
 				payload.image = screenshot;
 			}
 
-			if ( currentBlock ) {
+			if ( overrideKind ) {
+				// An override is a decision about what to build, so the
+				// previous attempt must not be sent as context: the server
+				// treats `current_block` as a refinement and would keep that
+				// definition's kind, defeating the override entirely.
+				payload.kind = overrideKind;
+
+				// Pass along the block we already know this request is about,
+				// so a style/variation override doesn't cost a second planning
+				// call just to rediscover it.
+				const knownTarget =
+					plan?.target_block || currentBlock?.target_block;
+				if ( knownTarget ) {
+					payload.target_block = knownTarget;
+				}
+			} else if ( currentBlock ) {
 				payload.current_block = currentBlock;
 			}
 
@@ -184,19 +219,21 @@ export default function AIBlockCreatorModal( {
 			const block = response?.block || response;
 
 			if ( block && block.name ) {
-				registerDynamicAiBlock( block );
+				registerAiDefinition( block );
 				setCurrentBlock( block );
+				setPlan( response?.plan || null );
 				setConversation( ( prev ) => [
 					...prev,
 					{
 						role: 'assistant',
 						content: sprintf(
-							// translators: %s: block title.
+							// translators: 1: kind of thing built, e.g. "Block style". 2: its title.
 							__(
-								'Created block "%s"! You can preview it on the right, refine it further, or insert it into your post.',
+								'Created %1$s "%2$s". Preview it on the right, refine it further, or insert it into your post.',
 								'ai-block-creator'
 							),
-							block.title || block.name
+							kindLabel( kindOf( block ) ).toLowerCase(),
+							block.label || block.title || block.name
 						),
 					},
 				] );
@@ -246,7 +283,7 @@ export default function AIBlockCreatorModal( {
 				data: currentBlock,
 			} );
 
-			registerDynamicAiBlock( saved );
+			registerAiDefinition( saved );
 			setCurrentBlock( saved );
 			setSaveSuccess( true );
 			notifyLibraryUpdated();
@@ -275,7 +312,7 @@ export default function AIBlockCreatorModal( {
 					method: 'POST',
 					data: currentBlock,
 				} );
-				registerDynamicAiBlock( saved );
+				registerAiDefinition( saved );
 				setCurrentBlock( saved );
 				notifyLibraryUpdated();
 			} catch ( err ) {
@@ -285,31 +322,37 @@ export default function AIBlockCreatorModal( {
 			}
 		}
 
-		const blockName = currentBlock.name.startsWith( 'ai-block/' )
-			? currentBlock.name
-			: `ai-block/${ currentBlock.name }`;
-
-		const initialAttrs = {};
-		if ( currentBlock.attributes ) {
-			Object.keys( currentBlock.attributes ).forEach( ( k ) => {
-				initialAttrs[ k ] = currentBlock.attributes[ k ]?.default ?? '';
-			} );
+		const newBlocks = createBlocksFromDefinition( currentBlock );
+		if ( ! newBlocks ) {
+			setError(
+				__(
+					'This definition could not be inserted into the post.',
+					'ai-block-creator'
+				)
+			);
+			return;
 		}
 
-		const newBlockInstance = createBlock( blockName, initialAttrs );
-
 		if ( placeholderClientId ) {
-			replaceBlocks( placeholderClientId, newBlockInstance );
+			replaceBlocks( placeholderClientId, newBlocks );
 		} else {
-			insertBlocks( newBlockInstance );
+			insertBlocks( newBlocks );
 		}
 
 		handleClose();
 	};
 
+	const currentKind = currentBlock ? kindOf( currentBlock ) : null;
+	const planTargetBlock =
+		plan?.target_block || currentBlock?.target_block || '';
+
 	const generateButtonLabel = currentBlock
-		? __( '✨ Refine Block', 'ai-block-creator' )
-		: __( '✨ Generate Block', 'ai-block-creator' );
+		? sprintf(
+				// translators: %s: kind of thing being refined, e.g. "block style".
+				__( '✨ Refine %s', 'ai-block-creator' ),
+				kindLabel( currentKind ).toLowerCase()
+		  )
+		: __( '✨ Generate', 'ai-block-creator' );
 
 	return (
 		<Modal
@@ -377,6 +420,63 @@ export default function AIBlockCreatorModal( {
 								'ai-block-creator'
 							) }
 						</Notice>
+					) }
+
+					{ plan && currentBlock && (
+						<div className="ai-plan-panel">
+							<div className="ai-plan-headline">
+								<span className="ai-plan-badge">
+									{ kindLabel( currentKind ) }
+								</span>
+								{ planTargetBlock && (
+									<code className="ai-plan-target">
+										{ planTargetBlock }
+									</code>
+								) }
+							</div>
+
+							<p className="ai-plan-explanation">
+								{ kindExplanation(
+									currentKind,
+									planTargetBlock
+								) }
+							</p>
+
+							{ plan.rationale && (
+								<p className="ai-plan-rationale">
+									{ sprintf(
+										// translators: %s: the AI's one-sentence reasoning.
+										__( 'Why: %s', 'ai-block-creator' ),
+										plan.rationale
+									) }
+								</p>
+							) }
+
+							<div className="ai-plan-alternatives">
+								<span className="ai-plan-alternatives-label">
+									{ __(
+										'Build this as:',
+										'ai-block-creator'
+									) }
+								</span>
+								{ alternativeKinds( currentKind ).map(
+									( alt ) => (
+										<Button
+											key={ alt.kind }
+											variant="link"
+											disabled={
+												isGenerating || isSaving
+											}
+											onClick={ () =>
+												handleGenerate( null, alt.kind )
+											}
+										>
+											{ alt.label }
+										</Button>
+									)
+								) }
+							</div>
+						</div>
 					) }
 
 					{ /* Conversation history view if multiple turns */ }

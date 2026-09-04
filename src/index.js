@@ -8,29 +8,55 @@ import { registerBlockType } from '@wordpress/blocks';
 import { useState, useEffect } from '@wordpress/element';
 import { Button } from '@wordpress/components';
 import { __ } from '@wordpress/i18n';
-import { registerDynamicAiBlock } from './runtime/dynamic-block-factory';
+import domReady from '@wordpress/dom-ready';
+import {
+	kindOf,
+	registerAiDefinition,
+	KIND_CUSTOM_BLOCK,
+} from './runtime/dynamic-block-factory';
 import AIBlockCreatorModal from './components/AIBlockCreatorModal';
 import BlockLibrarySidebar from './components/BlockLibrarySidebar';
 import './styles.scss';
 
 const OPEN_EVENT = 'open-ai-block-creator';
 
-// Boot-time registration of all stored AI Custom Blocks.
+// Boot-time registration of all stored AI definitions.
 const settings = window.aiBlockCreatorSettings || {};
+
+/**
+ * Registers one stored definition, logging rather than throwing on failure so
+ * a single malformed definition can't abort the whole boot loop.
+ *
+ * @param {Object} def Stored definition.
+ */
+function bootRegister( def ) {
+	try {
+		registerAiDefinition( def );
+	} catch ( e ) {
+		// A saved definition failing to register on load is a real problem
+		// worth surfacing to the console.
+		// eslint-disable-next-line no-console
+		console.error( 'Error initializing saved AI definition:', def.name, e );
+	}
+}
+
 if ( Array.isArray( settings.savedBlocks ) ) {
-	settings.savedBlocks.forEach( ( blockDef ) => {
-		try {
-			registerDynamicAiBlock( blockDef );
-		} catch ( e ) {
-			// A saved block failing to register on load is a real problem
-			// worth surfacing to the console.
-			// eslint-disable-next-line no-console
-			console.error(
-				'Error initializing saved AI block:',
-				blockDef.name,
-				e
-			);
-		}
+	const savedBlocks = settings.savedBlocks;
+
+	// Custom blocks stand alone, so they can register the moment this module
+	// runs. Styles and variations attach to a block someone else registered,
+	// and getBlockType() has to already know about it — core's own blocks come
+	// from wp-block-library, whose execution order relative to this script
+	// isn't guaranteed — so those wait until the document is ready and every
+	// editor script has run.
+	savedBlocks
+		.filter( ( def ) => kindOf( def ) === KIND_CUSTOM_BLOCK )
+		.forEach( bootRegister );
+
+	domReady( () => {
+		savedBlocks
+			.filter( ( def ) => kindOf( def ) !== KIND_CUSTOM_BLOCK )
+			.forEach( bootRegister );
 	} );
 }
 

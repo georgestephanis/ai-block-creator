@@ -134,7 +134,7 @@ add_filter(
  * on pages/editor sessions where the block is actually present.
  */
 function register_dynamic_blocks(): void {
-	foreach ( AI_Block_Store::all() as $def ) {
+	foreach ( AI_Block_Store::by_kind( AI_Block_Store::KIND_CUSTOM_BLOCK ) as $def ) {
 		if ( empty( $def['name'] ) ) {
 			continue;
 		}
@@ -155,7 +155,7 @@ function register_dynamic_blocks(): void {
 			}
 		}
 
-		$style_handle = register_block_style_handle( $slug, $def['css'] ?? '' );
+		$style_handle = register_ai_style_handle( $slug, $def['css'] ?? '' );
 
 		register_block_type(
 			$block_name,
@@ -182,8 +182,174 @@ function register_dynamic_blocks(): void {
 add_action( 'init', __NAMESPACE__ . '\\register_dynamic_blocks', 10 );
 
 /**
+ * Registers every stored `block_style` definition against its target block.
+ *
+ * Unlike a custom block, a style adds no markup and no render callback: it
+ * contributes a `.is-style-{name}` class the author can toggle from the
+ * target block's Styles panel, plus the CSS that class selects. WordPress
+ * enqueues that CSS only on pages where the target block actually appears.
+ *
+ * Runs at priority 20 so core's own block types (registered at priority 10)
+ * exist by the time AI_Block_Store validates each style's `target_block`
+ * against the registry.
+ */
+function register_ai_block_styles(): void {
+	foreach ( AI_Block_Store::by_kind( AI_Block_Store::KIND_BLOCK_STYLE ) as $def ) {
+		if ( empty( $def['name'] ) || empty( $def['target_block'] ) ) {
+			continue;
+		}
+
+		$style = array(
+			'name'  => $def['name'],
+			'label' => $def['label'] ?? $def['title'] ?? $def['name'],
+		);
+
+		if ( ! empty( $def['css'] ) ) {
+			$style['inline_style'] = $def['css'];
+		}
+
+		register_block_style( $def['target_block'], $style );
+	}
+}
+add_action( 'init', __NAMESPACE__ . '\\register_ai_block_styles', 20 );
+
+/**
+ * Appends stored `block_variation` definitions to their target block type.
+ *
+ * Variations are attached through the `get_block_type_variations` filter
+ * rather than the `variations` argument to register_block_type(), because the
+ * blocks being varied are already registered by the time this plugin loads --
+ * core registers its own blocks on `init`, and passing `variations` only has
+ * an effect at the moment a block type is created. The filter is the
+ * supported way to add a variation to somebody else's block.
+ *
+ * @param array<int, array<string, mixed>> $variations Existing variations.
+ * @param \WP_Block_Type                   $block_type Block type being queried.
+ * @return array<int, array<string, mixed>>
+ */
+function filter_ai_block_variations( array $variations, \WP_Block_Type $block_type ): array {
+	// Indexed by target rather than scanned per call: this filter fires once
+	// per block type queried, and building the editor's settings queries every
+	// registered one.
+	$grouped = AI_Block_Store::variations_by_target_block();
+
+	if ( empty( $grouped[ $block_type->name ] ) ) {
+		return $variations;
+	}
+
+	foreach ( $grouped[ $block_type->name ] as $def ) {
+		$variation = array(
+			'name'        => $def['name'],
+			'title'       => $def['title'] ?? $def['name'],
+			'description' => $def['description'] ?? '',
+			'icon'        => $def['icon'] ?? 'star-filled',
+			'attributes'  => $def['attributes'] ?? array(),
+			'scope'       => array( 'inserter', 'transform' ),
+		);
+
+		if ( ! empty( $def['inner_block_names'] ) && is_array( $def['inner_block_names'] ) ) {
+			$variation['innerBlocks'] = array_map(
+				static function ( string $inner_name ): array {
+					return array( $inner_name );
+				},
+				$def['inner_block_names']
+			);
+		}
+
+		$variations[] = $variation;
+	}
+
+	return $variations;
+}
+add_filter( 'get_block_type_variations', __NAMESPACE__ . '\\filter_ai_block_variations', 10, 2 );
+
+/**
+ * Registers the CSS a variation carries, if any.
+ *
+ * A variation is primarily an attribute preset and usually needs no CSS at
+ * all, but when it does (a `className` preset that nothing styles otherwise)
+ * the stylesheet has to be enqueued for the *target* block, since that is the
+ * block that will actually be on the page. wp_enqueue_block_style() attaches
+ * it to that block type so it still loads only where the block is used.
+ */
+function register_ai_variation_styles(): void {
+	foreach ( AI_Block_Store::by_kind( AI_Block_Store::KIND_BLOCK_VARIATION ) as $def ) {
+		if ( empty( $def['css'] ) || empty( $def['target_block'] ) || empty( $def['name'] ) ) {
+			continue;
+		}
+
+		$handle = register_ai_style_handle( 'variation-' . $def['name'], $def['css'] );
+		if ( ! $handle ) {
+			continue;
+		}
+
+		wp_enqueue_block_style(
+			$def['target_block'],
+			array(
+				'handle' => $handle,
+			)
+		);
+	}
+}
+add_action( 'init', __NAMESPACE__ . '\\register_ai_variation_styles', 20 );
+
+/**
+ * Registers every stored `block_pattern` definition.
+ *
+ * A pattern registers no block, no style and no variation: inserting it drops
+ * ordinary blocks into the post, which the author then edits like any other
+ * content. Nothing about the pattern survives insertion — there is no live
+ * link back to the definition — which is exactly what makes it the right
+ * answer for "an arrangement of blocks I want to start from".
+ *
+ * Runs at priority 20, after core's blocks (priority 10) exist, so
+ * AI_Block_Store has a populated registry to validate each pattern's block
+ * names against.
+ */
+function register_ai_block_patterns(): void {
+	if ( ! function_exists( 'register_block_pattern' ) ) {
+		return;
+	}
+
+	if ( function_exists( 'register_block_pattern_category' ) && ! \WP_Block_Pattern_Categories_Registry::get_instance()->is_registered( AI_Block_Store::PATTERN_NAMESPACE ) ) {
+		register_block_pattern_category(
+			AI_Block_Store::PATTERN_NAMESPACE,
+			array( 'label' => __( 'AI Patterns', 'ai-block-creator' ) )
+		);
+	}
+
+	foreach ( AI_Block_Store::by_kind( AI_Block_Store::KIND_BLOCK_PATTERN ) as $def ) {
+		// A pattern with no content would register an empty entry that looks
+		// broken in the inserter, so skip it rather than advertise nothing.
+		if ( empty( $def['name'] ) || empty( $def['content'] ) ) {
+			continue;
+		}
+
+		register_block_pattern(
+			AI_Block_Store::PATTERN_NAMESPACE . '/' . $def['name'],
+			array(
+				'title'         => $def['title'] ?? $def['name'],
+				'description'   => $def['description'] ?? '',
+				'content'       => $def['content'],
+				'categories'    => array( AI_Block_Store::PATTERN_NAMESPACE ),
+				'keywords'      => $def['keywords'] ?? array(),
+				'viewportWidth' => $def['viewport_width'] ?? 1200,
+			)
+		);
+	}
+}
+add_action( 'init', __NAMESPACE__ . '\\register_ai_block_patterns', 20 );
+
+/**
  * Registers (or updates) a per-block inline stylesheet handle, only when the
- * block actually has CSS. WordPress enqueues `style`/`editor_style` handles
+ * block actually has CSS.
+ *
+ * Named `register_ai_style_handle` rather than the more obvious
+ * `register_block_style_handle`, because WordPress core already has a global
+ * function by that name with an entirely different signature
+ * (`( $metadata, $field_name, $index )`). A namespaced function of the same
+ * name shadows it for every unqualified call inside this namespace, which is a
+ * trap for anyone who later wants core's version. WordPress enqueues `style`/`editor_style` handles
  * only when the block is used, so — unlike inlining all blocks' CSS on
  * every page — this scales with the number of blocks in use, not the number
  * of blocks that exist.
@@ -192,7 +358,7 @@ add_action( 'init', __NAMESPACE__ . '\\register_dynamic_blocks', 10 );
  * @param string $css  Already-sanitized CSS (AI_Block_Store::save() sanitizes on write).
  * @return string|null Style handle, or null when there is no CSS.
  */
-function register_block_style_handle( string $slug, string $css ): ?string {
+function register_ai_style_handle( string $slug, string $css ): ?string {
 	if ( empty( $css ) ) {
 		return null;
 	}
@@ -286,6 +452,7 @@ function enqueue_editor_assets(): void {
 		: array(
 			'dependencies' => array(
 				'wp-blocks',
+				'wp-dom-ready',
 				'wp-element',
 				'wp-components',
 				'wp-block-editor',

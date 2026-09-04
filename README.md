@@ -11,6 +11,8 @@
 
 ## ✨ Features
 
+- 🧭 **Plans Before It Builds**: A first, fast AI pass decides whether your request should become a brand-new **custom block**, a **block style** on an existing block, a **block variation**, or a **block pattern** — then tells you which it chose and why, with one click to rebuild it as any of the others. A *"make pull quotes gold"* request becomes an option in the Quote block's own Styles panel rather than a bespoke block nobody will find again, and *"a hero section with two buttons"* becomes a pattern of ordinary blocks you can edit normally.
+- 🧷 **Schema-Validated Generation**: Every request carries a JSON schema of the shape it expects, so providers that support structured output are constrained rather than merely asked. A response that still comes back malformed gets one automatic repair turn — and everything stored is independently validated regardless. Variations are checked against the target block's own `block.json` attributes, so they can't be saved with settings that would quietly do nothing.
 - 💬 **Conversational Block Creation**: Describe any component (*"3-tier pricing table with a featured plan"*, *"Testimonial card with 5 star rating"*, *"FAQ accordion"*) and refine it through multi-turn chat.
 - 🎙️ **Voice Dictation ("Speak it into existence")**: Click the microphone button and dictate your block requirements hands-free using the browser's Web Speech API.
 - 📸 **Screenshot-to-Block ("Screenshot it into existence")**: Paste (`Cmd+V` / `Ctrl+V`), drag & drop, or upload UI screenshots or mockups. The AI interprets the design and structures a matching Gutenberg block.
@@ -95,6 +97,47 @@ composer test           # PHPUnit — needs `composer install` first
 `build/` is committed to this repository — installing via a Git checkout (e.g. the Playground blueprint's `git:directory` step) doesn't run a build step, so a PR touching `src/` should include a rebuilt `build/`.
 
 The PHPUnit suite boots a real WordPress install (see `tests/php/bootstrap.php`) rather than the synthetic WP core test harness; if this plugin isn't checked out at the conventional `wp-content/plugins/<slug>/` depth, point it at one with `WP_ROOT=/path/to/wordpress composer test`.
+
+---
+
+## 🪝 Hooks
+
+Every hook is prefixed `ai_block_creator_`. All are optional — the plugin works without touching any of them.
+
+**Capability detection** — override what the plugin thinks the site can do, e.g. to force the UI on while developing against a stubbed provider.
+
+| Hook | Type | Default | Purpose |
+| --- | --- | --- | --- |
+| `ai_block_creator_has_connected_llm` | filter (`bool`) | detected | Whether an AI provider is connected. Gates the whole editor UI. |
+| `ai_block_creator_supports_image_input` | filter (`bool`) | detected | Whether the provider accepts images. Gates the screenshot dropzone. |
+
+**Model requests**
+
+| Hook | Type | Default | Purpose |
+| --- | --- | --- | --- |
+| `ai_block_creator_request_timeout` | filter (`float`) | `300.0` | Per-request timeout, in seconds. Custom-block generation is the slow case; lower it if you'd rather fail fast. |
+| `ai_block_creator_model_config_options` | filter (`array`) | `chat_template_kwargs` | Provider-specific `ModelConfig` custom options. The default disables "thinking" on vLLM/Qwen-style servers; other providers may reject unknown keys, so replace rather than extend if yours does. |
+| `ai_block_creator_use_response_schema` | filter (`bool`) | `true` | Whether to send a JSON Schema with each request. Turn off for a provider that rejects ours — stored definitions are still validated either way. |
+| `ai_block_creator_repaired_response` | **action** | — | Fires when a malformed response was successfully repaired on the retry. Receives the problems the first response had. Useful for logging how often a provider needs the second turn. |
+
+**What the AI may target** — the default lists are curated rather than "every registered block", because a site with a dozen plugins has hundreds of them and most are noise in a prompt. Both results are intersected with the block registry *after* filtering, so you can add your own blocks but can't put a block this site doesn't have in front of the model.
+
+| Hook | Type | Default | Purpose |
+| --- | --- | --- | --- |
+| `ai_block_creator_target_block_candidates` | filter (`string[]`) | 23 core blocks | Blocks a generated *style* or *variation* may attach to. Add your own blocks here to let the AI style them. |
+| `ai_block_creator_pattern_block_allowlist` | filter (`string[]`) | 23 core blocks | Blocks a generated *pattern* may be built from. Anything a pattern references that isn't on this list is dropped when the pattern is saved. |
+
+Example — let the AI style your theme's own blocks:
+
+```php
+add_filter(
+	'ai_block_creator_target_block_candidates',
+	function ( array $blocks ): array {
+		$blocks[] = 'mytheme/callout';
+		return $blocks;
+	}
+);
+```
 
 ---
 

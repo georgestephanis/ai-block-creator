@@ -3,14 +3,56 @@ import { PluginSidebar, PluginSidebarMoreMenuItem } from '@wordpress/editor';
 import { Button, Spinner, Notice, Icon } from '@wordpress/components';
 import { useDispatch } from '@wordpress/data';
 import {
-	createBlock,
 	unregisterBlockType,
+	unregisterBlockStyle,
+	unregisterBlockVariation,
 	getBlockType,
 } from '@wordpress/blocks';
 import { __, sprintf } from '@wordpress/i18n';
 import { starFilled, pencil, trash } from '@wordpress/icons';
 import apiFetch from '@wordpress/api-fetch';
 import VoiceInput from './VoiceInput';
+import {
+	createBlocksFromDefinition,
+	kindOf,
+	KIND_CUSTOM_BLOCK,
+	KIND_BLOCK_STYLE,
+	KIND_BLOCK_VARIATION,
+	KIND_BLOCK_PATTERN,
+} from '../runtime/dynamic-block-factory';
+import { definitionKindLabel } from './kind-labels';
+
+/**
+ * Removes a deleted definition from the editor's client-side registry, so it
+ * stops appearing in the inserter / Styles panel without a page reload. Each
+ * kind lives in a different registry, so a style can't be unregistered as if
+ * it were a block type.
+ *
+ * @param {Object} def Definition that was just deleted.
+ */
+function unregisterDefinition( def ) {
+	try {
+		switch ( kindOf( def ) ) {
+			case KIND_BLOCK_STYLE:
+				unregisterBlockStyle( def.target_block, def.name );
+				break;
+			case KIND_BLOCK_VARIATION:
+				unregisterBlockVariation( def.target_block, def.name );
+				break;
+			case KIND_BLOCK_PATTERN:
+				// Patterns are never registered client-side (see
+				// registerAiDefinition), so there is nothing to undo here; the
+				// server-side registration goes with the deleted post.
+				break;
+			default:
+				if ( getBlockType( def.name ) ) {
+					unregisterBlockType( def.name );
+				}
+		}
+	} catch ( e ) {
+		// Already gone from the registry.
+	}
+}
 
 export const LIBRARY_UPDATED_EVENT = 'ai-block-creator-library-updated';
 
@@ -78,13 +120,7 @@ function LibraryRow( {
 				method: 'DELETE',
 			} );
 
-			if ( getBlockType( block.name ) ) {
-				try {
-					unregisterBlockType( block.name );
-				} catch ( e ) {
-					// Already gone from registry.
-				}
-			}
+			unregisterDefinition( block );
 
 			onDeleted( block.id );
 		} catch ( err ) {
@@ -105,8 +141,16 @@ function LibraryRow( {
 				</span>
 				<div className="ai-library-row-text">
 					<strong className="ai-library-row-title">
-						{ block.title || block.name }
+						{ block.label || block.title || block.name }
 					</strong>
+					{ kindOf( block ) !== KIND_CUSTOM_BLOCK && (
+						<span className="ai-library-row-kind">
+							{ definitionKindLabel( block ) }
+							{ block.target_block
+								? ` · ${ block.target_block }`
+								: '' }
+						</span>
+					) }
 					{ block.description && (
 						<span className="ai-library-row-desc">
 							{ block.description }
@@ -220,13 +264,10 @@ export default function BlockLibrarySidebar( { onLaunchModal, onRefine } ) {
 	}, [ fetchBlocks ] );
 
 	const handleInsert = ( block ) => {
-		const initialAttrs = {};
-		if ( block.attributes ) {
-			Object.keys( block.attributes ).forEach( ( k ) => {
-				initialAttrs[ k ] = block.attributes[ k ]?.default ?? '';
-			} );
+		const newBlocks = createBlocksFromDefinition( block );
+		if ( newBlocks ) {
+			insertBlocks( newBlocks );
 		}
-		insertBlocks( createBlock( block.name, initialAttrs ) );
 	};
 
 	const handleDeleted = ( deletedId ) => {
