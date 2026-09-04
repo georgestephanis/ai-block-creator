@@ -240,6 +240,31 @@ final class KindRegistrationTest extends TestCase
         );
     }
 
+    public function test_variation_css_is_registered_as_an_enqueueable_handle(): void
+    {
+        // A variation's CSS has to be attached to the *target* block, since
+        // that is the block that will actually be on the page. Without this,
+        // the CSS is stored, looks right in the preview, and never loads.
+        $variation = AI_Block_Store::save(array(
+            'kind'         => 'block_variation',
+            'name'         => 'css-handle-test',
+            'title'        => 'CSS Handle Test',
+            'target_block' => 'core/quote',
+            'css'          => '.ai-variation-css-handle-test { color: rebeccapurple; }',
+        ));
+        $this->assertIsArray($variation);
+        $this->created_post_ids[] = $variation['id'];
+
+        \AI_Block_Creator\register_ai_variation_styles();
+
+        $handle = 'ai-block-style-variation-ai-css-handle-test';
+        $this->assertTrue(wp_style_is($handle, 'registered'));
+
+        $inline = wp_styles()->get_data($handle, 'after');
+        $this->assertNotEmpty($inline);
+        $this->assertStringContainsString('rebeccapurple', implode('', (array) $inline));
+    }
+
     public function test_a_custom_block_is_still_registered_as_a_block_type(): void
     {
         $block = AI_Block_Store::save(array(

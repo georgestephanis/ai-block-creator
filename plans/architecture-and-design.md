@@ -177,7 +177,7 @@ they always did.
 
 Because `post_name` is the uniqueness key that decides create-vs-update, kinds are
 namespaced against each other (`{slug}`, `style-{slug}`, `variation-{slug}`,
-`pattern-{slug}`);
+`pattern-{slug}`), and `get()` searches all four;
 without that, saving a style named "callout" would overwrite the custom block
 named "callout". Custom blocks keep their bare slug for backward compatibility.
 
@@ -272,6 +272,14 @@ Note that a variation's `attributes` are concrete **values** to preset on the
 target block, not the `{ type, default }` **schema** a custom block declares.
 They go through `sanitize_attribute_values()`, not `sanitize_attributes()`;
 running the schema sanitizer over them would discard every one.
+
+Those values nest further than a first glance suggests — core's own markup carries
+`style.spacing.padding.top` and `style.elements.link.color.text` — so
+`MAX_ATTRIBUTE_DEPTH` sits above the deepest shape WordPress itself emits. When a
+branch does exceed it, the key is omitted rather than kept as an empty array:
+`{"style":{"elements":[]}}` isn't a truncated object, it's an array where
+Gutenberg expects an object, and a malformed attribute is worse than a missing
+one.
 
 `inner_block_names` is a flat, length-capped list of block names, not a recursive
 `innerBlocks` template. One level covers the cases this is for (a two-column

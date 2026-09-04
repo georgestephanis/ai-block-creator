@@ -204,6 +204,127 @@ final class DefinitionKindsTest extends TestCase
         $this->assertSame('wide', $normalized['attributes']['align']);
     }
 
+    public function test_deeply_nested_style_attributes_survive_intact(): void
+    {
+        // Block style attributes nest deeper than they look: core itself emits
+        // style.spacing.padding.top (4 levels) and
+        // style.elements.link.color.text (5). A shallower cap silently strips
+        // real styling from variations and patterns alike.
+        $normalized = AI_Block_Store::normalize_and_validate(array(
+            'kind'         => 'block_variation',
+            'name'         => 'deep-style',
+            'target_block' => 'core/group',
+            'attributes'   => array(
+                'style' => array(
+                    'elements' => array('link' => array('color' => array('text' => '#ffffff'))),
+                    'spacing'  => array('padding' => array('top' => '4rem', 'bottom' => '4rem')),
+                ),
+            ),
+        ));
+
+        $style = $normalized['attributes']['style'];
+        $this->assertSame('#ffffff', $style['elements']['link']['color']['text']);
+        $this->assertSame('4rem', $style['spacing']['padding']['top']);
+    }
+
+    public function test_an_over_deep_branch_is_omitted_not_left_as_an_empty_array(): void
+    {
+        // Truncation must never change a value's *type*. `"elements": []`
+        // where Gutenberg expects an object is worse than the key being
+        // absent -- it's malformed rather than merely incomplete.
+        $deep  = 'leaf';
+        for ($i = 0; $i < 12; $i++) {
+            $deep = array('down' => $deep);
+        }
+
+        $normalized = AI_Block_Store::normalize_and_validate(array(
+            'kind'         => 'block_variation',
+            'name'         => 'too-deep',
+            'target_block' => 'core/group',
+            'attributes'   => array('style' => $deep),
+        ));
+
+        // `style` is absent entirely rather than present-but-empty. (An empty
+        // top-level attribute map is fine and expected -- it means the
+        // variation presets nothing.)
+        $this->assertArrayNotHasKey('style', $normalized['attributes']);
+        $this->assertNoEmptyArraysWithin($normalized['attributes']);
+    }
+
+    /**
+     * Asserts no nested key anywhere holds an empty array, which would mean a
+     * truncated branch was stored as the wrong type instead of omitted.
+     *
+     * @param array<string, mixed> $value Value to walk.
+     * @param string               $path  Path walked so far, for the failure message.
+     */
+    private function assertNoEmptyArraysWithin(array $value, string $path = ''): void
+    {
+        foreach ($value as $key => $child) {
+            if (! is_array($child)) {
+                continue;
+            }
+
+            $child_path = '' === $path ? (string) $key : $path . '.' . $key;
+            $this->assertNotSame(array(), $child, "Empty array stored at {$child_path}.");
+            $this->assertNoEmptyArraysWithin($child, $child_path);
+        }
+    }
+
+    public function test_a_realistic_pattern_round_trips_byte_for_byte(): void
+    {
+        // The strongest statement the sanitizer can make about well-formed
+        // core markup: it changes nothing at all.
+        $markup = '<!-- wp:group {"style":{"elements":{"link":{"color":{"text":"#ffffff"}}},'
+            . '"spacing":{"padding":{"top":"4rem","bottom":"4rem"}}},"backgroundColor":"contrast"} -->'
+            . '<div class="wp-block-group has-contrast-background-color">'
+            . '<!-- wp:heading {"textAlign":"center"} --><h2 class="wp-block-heading has-text-align-center">Hi</h2><!-- /wp:heading -->'
+            . '<!-- wp:buttons --><div class="wp-block-buttons">'
+            . '<!-- wp:button --><div class="wp-block-button"><a class="wp-block-button__link wp-element-button" href="#go">Go</a></div><!-- /wp:button -->'
+            . '</div><!-- /wp:buttons -->'
+            . '</div><!-- /wp:group -->';
+
+        $normalized = AI_Block_Store::normalize_and_validate(array(
+            'kind'    => 'block_pattern',
+            'name'    => 'realistic',
+            'content' => $markup,
+        ));
+
+        $this->assertSame($markup, $normalized['content']);
+    }
+
+    public function test_get_resolves_definitions_of_every_kind(): void
+    {
+        // post_name is namespaced per kind, so a bare-slug lookup would only
+        // ever find custom blocks and return a null that reads as "no such
+        // definition" for everything else.
+        $style = AI_Block_Store::save(array(
+            'kind'         => 'block_style',
+            'name'         => 'gettable-style',
+            'label'        => 'Gettable Style',
+            'target_block' => 'core/quote',
+        ));
+        $this->assertNotWPError($style);
+        $this->created_post_ids[] = $style['id'];
+
+        $pattern = AI_Block_Store::save(array(
+            'kind'    => 'block_pattern',
+            'name'    => 'gettable-pattern',
+            'title'   => 'Gettable Pattern',
+            'content' => '<!-- wp:paragraph --><p>x</p><!-- /wp:paragraph -->',
+        ));
+        $this->assertNotWPError($pattern);
+        $this->created_post_ids[] = $pattern['id'];
+
+        $found_style = AI_Block_Store::get('ai-gettable-style');
+        $this->assertNotNull($found_style);
+        $this->assertSame(AI_Block_Store::KIND_BLOCK_STYLE, $found_style['kind']);
+
+        $found_pattern = AI_Block_Store::get('ai-gettable-pattern');
+        $this->assertNotNull($found_pattern);
+        $this->assertSame(AI_Block_Store::KIND_BLOCK_PATTERN, $found_pattern['kind']);
+    }
+
     public function test_variation_drops_unregistered_inner_blocks_rather_than_substituting_them(): void
     {
         $normalized = AI_Block_Store::normalize_and_validate(

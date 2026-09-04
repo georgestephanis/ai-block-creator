@@ -155,7 +155,7 @@ function register_dynamic_blocks(): void {
 			}
 		}
 
-		$style_handle = register_block_style_handle( $slug, $def['css'] ?? '' );
+		$style_handle = register_ai_style_handle( $slug, $def['css'] ?? '' );
 
 		register_block_type(
 			$block_name,
@@ -273,7 +273,7 @@ function register_ai_variation_styles(): void {
 			continue;
 		}
 
-		$handle = register_block_style_handle( 'variation-' . $def['name'], $def['css'] );
+		$handle = register_ai_style_handle( 'variation-' . $def['name'], $def['css'] );
 		if ( ! $handle ) {
 			continue;
 		}
@@ -337,7 +337,14 @@ add_action( 'init', __NAMESPACE__ . '\\register_ai_block_patterns', 20 );
 
 /**
  * Registers (or updates) a per-block inline stylesheet handle, only when the
- * block actually has CSS. WordPress enqueues `style`/`editor_style` handles
+ * block actually has CSS.
+ *
+ * Named `register_ai_style_handle` rather than the more obvious
+ * `register_block_style_handle`, because WordPress core already has a global
+ * function by that name with an entirely different signature
+ * (`( $metadata, $field_name, $index )`). A namespaced function of the same
+ * name shadows it for every unqualified call inside this namespace, which is a
+ * trap for anyone who later wants core's version. WordPress enqueues `style`/`editor_style` handles
  * only when the block is used, so — unlike inlining all blocks' CSS on
  * every page — this scales with the number of blocks in use, not the number
  * of blocks that exist.
@@ -346,7 +353,7 @@ add_action( 'init', __NAMESPACE__ . '\\register_ai_block_patterns', 20 );
  * @param string $css  Already-sanitized CSS (AI_Block_Store::save() sanitizes on write).
  * @return string|null Style handle, or null when there is no CSS.
  */
-function register_block_style_handle( string $slug, string $css ): ?string {
+function register_ai_style_handle( string $slug, string $css ): ?string {
 	if ( empty( $css ) ) {
 		return null;
 	}

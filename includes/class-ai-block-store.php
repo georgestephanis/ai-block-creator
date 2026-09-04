@@ -112,6 +112,20 @@ class AI_Block_Store {
 	private const MAX_PATTERN_DEPTH = 10;
 
 	/**
+	 * Maximum nesting depth kept when sanitizing attribute *values*.
+	 *
+	 * Block attribute values nest deeper than they first appear: core's own
+	 * markup routinely carries `style.spacing.padding.top` (4) and
+	 * `style.elements.link.color.text` (5), and a pseudo-selector variant like
+	 * `style.elements.link.:hover.color.text` reaches 6. A cap below that
+	 * silently strips real styling, so this is set above the deepest shape
+	 * WordPress itself emits while still bounding what can be stored.
+	 *
+	 * @var int
+	 */
+	private const MAX_ATTRIBUTE_DEPTH = 8;
+
+	/**
 	 * Cache group for in-request/object-cache memoization.
 	 *
 	 * @var string
@@ -130,7 +144,7 @@ class AI_Block_Store {
 	 *
 	 * @var string[]
 	 */
-	private const ALLOWED_FIELD_TYPES = array( 'text', 'textarea', 'color', 'toggle', 'url', 'number', 'select' );
+	public const ALLOWED_FIELD_TYPES = array( 'text', 'textarea', 'color', 'toggle', 'url', 'number', 'select' );
 
 	/**
 	 * Returns all published block definitions.
@@ -179,12 +193,20 @@ class AI_Block_Store {
 			return $cached;
 		}
 
+		// Kinds are namespaced in post_name (see post_slug_for()), so a bare
+		// slug only ever resolves a custom block. Looking under the other
+		// prefixes too means a caller asking for a style by its name gets the
+		// style, rather than a null that reads as "no such definition".
+		$candidate_slugs = array( $slug, 'style-' . $slug, 'variation-' . $slug, 'pattern-' . $slug );
+
 		$posts = get_posts(
 			array(
-				'post_type'      => self::POST_TYPE,
-				'name'           => $slug,
-				'posts_per_page' => 1,
-				'post_status'    => 'publish',
+				'post_type'           => self::POST_TYPE,
+				'post_name__in'       => $candidate_slugs,
+				'posts_per_page'      => 1,
+				'post_status'         => 'publish',
+				'orderby'             => 'post_name__in',
+				'ignore_sticky_posts' => true,
 			)
 		);
 
@@ -516,7 +538,12 @@ class AI_Block_Store {
 		}
 
 		if ( strlen( $content ) > self::MAX_PATTERN_CONTENT_BYTES ) {
-			$content = substr( $content, 0, self::MAX_PATTERN_CONTENT_BYTES );
+			// mb_strcut, not substr: cutting mid-character would leave invalid
+			// UTF-8 in post meta. Any block left incomplete by the cut is then
+			// dropped by the parse/serialize round-trip below, so an oversized
+			// pattern degrades to its first N whole blocks rather than to
+			// broken markup.
+			$content = mb_strcut( $content, 0, self::MAX_PATTERN_CONTENT_BYTES );
 		}
 
 		$blocks = self::sanitize_block_list( parse_blocks( $content ), 0 );
@@ -783,10 +810,10 @@ class AI_Block_Store {
 	 * Sanitizes a flat map of concrete attribute *values* (as opposed to an
 	 * attribute schema — see sanitize_attributes()).
 	 *
-	 * Values may be scalars, or one level of array/object containing scalars
-	 * (enough for e.g. `style.color.background`-shaped presets); anything
-	 * deeper is dropped rather than recursed into, so a definition can't carry
-	 * an unbounded nested payload into post meta.
+	 * Values may be scalars or nested arrays/objects up to
+	 * MAX_ATTRIBUTE_DEPTH levels, which is deeper than any shape WordPress
+	 * itself emits; beyond that a branch is omitted rather than recursed into,
+	 * so a definition can't carry an unbounded nested payload into post meta.
 	 *
 	 * @param array<string, mixed> $values Raw attribute values.
 	 * @param int                  $depth  Current recursion depth; callers should omit it.
@@ -805,8 +832,16 @@ class AI_Block_Store {
 				$clean[ $key ] = $value;
 			} elseif ( is_string( $value ) ) {
 				$clean[ $key ] = sanitize_text_field( $value );
-			} elseif ( is_array( $value ) && $depth < 2 ) {
-				$clean[ $key ] = self::sanitize_attribute_values( $value, $depth + 1 );
+			} elseif ( is_array( $value ) && $depth < self::MAX_ATTRIBUTE_DEPTH ) {
+				$nested = self::sanitize_attribute_values( $value, $depth + 1 );
+
+				// An emptied branch is omitted rather than stored as an empty
+				// array. `{"style":{"elements":[]}}` is not a smaller version
+				// of the original — it's the wrong *type* (Gutenberg expects an
+				// object there), which is worse than the key being absent.
+				if ( ! empty( $nested ) ) {
+					$clean[ $key ] = $nested;
+				}
 			}
 		}
 

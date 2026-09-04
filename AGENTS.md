@@ -117,13 +117,29 @@ this code:
 - **A variation's `attributes` are values, a custom block's are a schema.** They
   need `sanitize_attribute_values()`, not `sanitize_attributes()`; the schema
   sanitizer silently discards concrete values (none is an array with a `type`).
+- **Attribute values nest deeper than they look.** Core emits
+  `style.spacing.padding.top` (4 levels) and `style.elements.link.color.text` (5);
+  `MAX_ATTRIBUTE_DEPTH` is set above the deepest shape WordPress itself produces
+  for exactly that reason. Two rules when touching that walk: don't lower the cap
+  without checking real core markup, and when a branch *is* truncated, omit the
+  key rather than storing an empty array — `{"style":{"elements":[]}}` is not a
+  smaller version of the original, it's the wrong *type* where Gutenberg expects
+  an object, which is worse than the key being absent.
 - **A style's `name` is a published contract.** It becomes the `.is-style-{name}`
   class written into post content, so refinement turns pin the stored name instead
   of letting the model rename it. (Custom blocks still allow a rename on refinement
   — a pre-existing behavior this didn't change.)
 - **Kinds share one post type and are namespaced in `post_name`** (`{slug}`,
-  `style-{slug}`, `variation-{slug}`) so a style can't overwrite the custom block
-  that happens to share its slug. Custom blocks keep their bare slug.
+  `style-{slug}`, `variation-{slug}`, `pattern-{slug}`) so a style can't overwrite
+  the custom block that happens to share its slug. Custom blocks keep their bare
+  slug. `AI_Block_Store::get()` searches all four prefixes, so a lookup by name
+  resolves whichever kind owns it rather than returning a null that reads as "no
+  such definition".
+- **Don't name a namespaced function after a core global.** `register_ai_style_handle()`
+  is deliberately *not* called `register_block_style_handle()`: core has a global
+  function by that name with a completely different signature
+  (`( $metadata, $field_name, $index )`), and a namespaced twin shadows it for
+  every unqualified call inside `AI_Block_Creator`.
 
 ### 2c. Response Schemas & The Repair Turn
 
@@ -134,7 +150,10 @@ WordPress AI Client accepts one, and core's own abilities use it. Two rules:
   `AI_Block_Store`'s normalizers still allowlist every field independently. The
   schema reduces how often the model is wrong; it never makes the normalizer
   optional. `ai_block_creator_use_response_schema` disables schema sending for a
-  provider that rejects ours.
+  provider that rejects ours. Where a schema restates something the store already
+  enforces, take it from the store (`AI_Block_Store::ALLOWED_KINDS`,
+  `::ALLOWED_FIELD_TYPES`) rather than repeating the literal, so the shape we ask
+  for and the shape we accept can't drift apart.
 - **Validate locally against a *relaxed* copy of the schema.** `schema_problems()`
   strips `additionalProperties: false` via `relax_schema()` before calling
   `rest_validate_value_from_schema()`. Keeping it strict would spend a whole

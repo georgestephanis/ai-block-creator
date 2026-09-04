@@ -1055,7 +1055,10 @@ PROMPT;
 									'label' => array( 'type' => 'string' ),
 									'type'  => array(
 										'type' => 'string',
-										'enum' => array( 'text', 'textarea', 'color', 'toggle', 'url', 'number', 'select' ),
+										// Taken from the store rather than
+										// restated, so the shape we ask for and
+										// the shape we accept cannot drift.
+										'enum' => AI_Block_Store::ALLOWED_FIELD_TYPES,
 									),
 								),
 								'required'   => array( 'name', 'label', 'type' ),
