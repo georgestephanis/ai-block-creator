@@ -11,6 +11,7 @@
 
 ## ✨ Features
 
+- 🧭 **Plans Before It Builds**: A first, fast AI pass decides whether your request should become a brand-new **custom block**, a **block style** on an existing block, or a **block variation** — then tells you which it chose and why, with one click to rebuild it as either of the others. A *"make pull quotes gold"* request becomes an option in the Quote block's own Styles panel rather than a bespoke block nobody will find again.
 - 💬 **Conversational Block Creation**: Describe any component (*"3-tier pricing table with a featured plan"*, *"Testimonial card with 5 star rating"*, *"FAQ accordion"*) and refine it through multi-turn chat.
 - 🎙️ **Voice Dictation ("Speak it into existence")**: Click the microphone button and dictate your block requirements hands-free using the browser's Web Speech API.
 - 📸 **Screenshot-to-Block ("Screenshot it into existence")**: Paste (`Cmd+V` / `Ctrl+V`), drag & drop, or upload UI screenshots or mockups. The AI interprets the design and structures a matching Gutenberg block.

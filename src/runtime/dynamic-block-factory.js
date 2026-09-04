@@ -7,6 +7,11 @@ import {
 	registerBlockType,
 	unregisterBlockType,
 	getBlockType,
+	registerBlockStyle,
+	unregisterBlockStyle,
+	registerBlockVariation,
+	unregisterBlockVariation,
+	createBlock,
 } from '@wordpress/blocks';
 import {
 	useBlockProps,
@@ -523,4 +528,233 @@ export function registerDynamicAiBlock( blockDef ) {
 		console.error( 'Error registering dynamic AI block:', err );
 		return null;
 	}
+}
+
+/**
+ * The definition kinds this plugin can produce. Mirrors the KIND_* constants
+ * on AI_Block_Store in PHP; the two lists must stay in sync.
+ */
+export const KIND_CUSTOM_BLOCK = 'custom_block';
+export const KIND_BLOCK_STYLE = 'block_style';
+export const KIND_BLOCK_VARIATION = 'block_variation';
+
+/**
+ * Reads a definition's kind, defaulting to a custom block.
+ *
+ * Definitions saved before kinds existed have no `kind` field at all, and are
+ * all custom blocks — so an absent (or unrecognized) kind must resolve to
+ * that, not be treated as an error.
+ *
+ * @param {Object} def Definition.
+ * @return {string} One of the KIND_* values.
+ */
+export function kindOf( def ) {
+	const kind = def?.kind;
+	return [
+		KIND_CUSTOM_BLOCK,
+		KIND_BLOCK_STYLE,
+		KIND_BLOCK_VARIATION,
+	].includes( kind )
+		? kind
+		: KIND_CUSTOM_BLOCK;
+}
+
+/**
+ * Builds the `registerBlockStyle()` argument for a style definition.
+ *
+ * Split out from the registration call itself so the shape can be unit-tested
+ * without a real @wordpress/blocks registry.
+ *
+ * @param {Object} def Style definition.
+ * @return {Object|null} { target, style } or null when the definition is unusable.
+ */
+export function buildStyleConfig( def ) {
+	if ( ! def?.name || ! def?.target_block ) {
+		return null;
+	}
+
+	return {
+		target: def.target_block,
+		style: {
+			name: def.name,
+			label: def.label || def.title || def.name,
+		},
+	};
+}
+
+/**
+ * Builds the `registerBlockVariation()` argument for a variation definition.
+ *
+ * `inner_block_names` is a flat list of block names (see
+ * AI_Block_Store::sanitize_inner_block_names()); Gutenberg's innerBlocks
+ * template format is an array of `[ name, attributes, innerBlocks ]` tuples,
+ * so each name becomes a single-element tuple here.
+ *
+ * @param {Object} def Variation definition.
+ * @return {Object|null} { target, variation } or null when the definition is unusable.
+ */
+export function buildVariationConfig( def ) {
+	if ( ! def?.name || ! def?.target_block ) {
+		return null;
+	}
+
+	const variation = {
+		name: def.name,
+		title: def.title || def.name,
+		description: def.description || '',
+		icon: def.icon || 'star-filled',
+		attributes: def.attributes || {},
+		scope: [ 'inserter', 'transform' ],
+	};
+
+	if (
+		Array.isArray( def.inner_block_names ) &&
+		def.inner_block_names.length
+	) {
+		variation.innerBlocks = def.inner_block_names.map( ( name ) => [
+			name,
+		] );
+	}
+
+	return { target: def.target_block, variation };
+}
+
+/**
+ * Registers a block style definition against its target block.
+ *
+ * @param {Object} def Style definition.
+ * @return {boolean} Whether the style was registered.
+ */
+export function registerAiBlockStyle( def ) {
+	const config = buildStyleConfig( def );
+	if ( ! config || ! getBlockType( config.target ) ) {
+		return false;
+	}
+
+	if ( def.css ) {
+		injectBlockStyles( `style-${ def.name }`, def.css );
+	}
+
+	// Re-registering a style name throws; drop any previous registration first
+	// so refining a style updates it in place instead of failing silently.
+	try {
+		unregisterBlockStyle( config.target, config.style.name );
+	} catch ( e ) {
+		// Not previously registered.
+	}
+
+	try {
+		registerBlockStyle( config.target, config.style );
+		return true;
+	} catch ( err ) {
+		// eslint-disable-next-line no-console
+		console.error( 'Error registering AI block style:', err );
+		return false;
+	}
+}
+
+/**
+ * Registers a block variation definition against its target block.
+ *
+ * @param {Object} def Variation definition.
+ * @return {boolean} Whether the variation was registered.
+ */
+export function registerAiBlockVariation( def ) {
+	const config = buildVariationConfig( def );
+	if ( ! config || ! getBlockType( config.target ) ) {
+		return false;
+	}
+
+	if ( def.css ) {
+		injectBlockStyles( `variation-${ def.name }`, def.css );
+	}
+
+	try {
+		unregisterBlockVariation( config.target, config.variation.name );
+	} catch ( e ) {
+		// Not previously registered.
+	}
+
+	try {
+		registerBlockVariation( config.target, config.variation );
+		return true;
+	} catch ( err ) {
+		// eslint-disable-next-line no-console
+		console.error( 'Error registering AI block variation:', err );
+		return false;
+	}
+}
+
+/**
+ * Registers any AI definition, dispatching on its kind.
+ *
+ * This is the entry point every caller should use; registerDynamicAiBlock()
+ * remains exported for the custom-block path it has always handled.
+ *
+ * @param {Object} def Definition of any kind.
+ * @return {boolean} Whether registration succeeded.
+ */
+export function registerAiDefinition( def ) {
+	switch ( kindOf( def ) ) {
+		case KIND_BLOCK_STYLE:
+			return registerAiBlockStyle( def );
+		case KIND_BLOCK_VARIATION:
+			return registerAiBlockVariation( def );
+		default:
+			return Boolean( registerDynamicAiBlock( def ) );
+	}
+}
+
+/**
+ * Builds the editor block(s) that inserting a definition should produce.
+ *
+ * A custom block inserts itself, seeded with its attribute defaults. A style
+ * inserts its *target* block carrying the style's class — there is nothing
+ * else to insert, since a style is only ever a class on some other block. A
+ * variation inserts its target block with the variation's preset attributes
+ * and inner blocks.
+ *
+ * @param {Object} def Definition of any kind.
+ * @return {Object|null} A block object from createBlock(), or null.
+ */
+export function createBlockFromDefinition( def ) {
+	if ( ! def?.name ) {
+		return null;
+	}
+
+	const kind = kindOf( def );
+
+	if ( kind === KIND_BLOCK_STYLE ) {
+		if ( ! def.target_block ) {
+			return null;
+		}
+		return createBlock( def.target_block, {
+			className: `is-style-${ def.name }`,
+		} );
+	}
+
+	if ( kind === KIND_BLOCK_VARIATION ) {
+		if ( ! def.target_block ) {
+			return null;
+		}
+		const innerBlocks = Array.isArray( def.inner_block_names )
+			? def.inner_block_names.map( ( name ) => createBlock( name ) )
+			: [];
+		return createBlock(
+			def.target_block,
+			{ ...( def.attributes || {} ) },
+			innerBlocks
+		);
+	}
+
+	const blockName = def.name.startsWith( 'ai-block/' )
+		? def.name
+		: `ai-block/${ def.name }`;
+
+	const initialAttrs = {};
+	Object.keys( def.attributes || {} ).forEach( ( key ) => {
+		initialAttrs[ key ] = def.attributes[ key ]?.default ?? '';
+	} );
+
+	return createBlock( blockName, initialAttrs );
 }

@@ -141,6 +141,80 @@ final class RestControllerTest extends TestCase
         $this->assertNull(AI_Block_Store::get('ai-block/rest-delete-round-trip'));
     }
 
+    public function test_plan_route_is_registered(): void
+    {
+        // The planning stage is a separate route so the editor can show (and
+        // let an author override) the decision before paying for generation.
+        $routes = rest_get_server()->get_routes();
+
+        $this->assertArrayHasKey('/ai-block-creator/v1/plan', $routes);
+    }
+
+    public function test_plan_rejects_an_empty_prompt(): void
+    {
+        $request = new WP_REST_Request('POST', '/ai-block-creator/v1/plan');
+        $request->set_header('Content-Type', 'application/json');
+        $request->set_body(wp_json_encode(array('prompt' => '   ')));
+
+        $this->assertSame(400, rest_do_request($request)->get_status());
+    }
+
+    public function test_generate_rejects_an_unrecognized_kind(): void
+    {
+        // `kind` is an author override of the planner, so it is enum-validated
+        // at the route rather than quietly coerced somewhere downstream.
+        $request = new WP_REST_Request('POST', '/ai-block-creator/v1/generate');
+        $request->set_header('Content-Type', 'application/json');
+        $request->set_body(wp_json_encode(array(
+            'prompt' => 'A gold pull quote',
+            'kind'   => 'block_pattern',
+        )));
+
+        $this->assertSame(400, rest_do_request($request)->get_status());
+    }
+
+    public function test_save_round_trips_a_block_style_definition(): void
+    {
+        $response = $this->post_blocks(array(
+            'kind'         => 'block_style',
+            'name'         => 'rest-style-round-trip',
+            'label'        => 'REST Style Round Trip',
+            'target_block' => 'core/quote',
+            'css'          => '.is-style-ai-rest-style-round-trip { color: gold; }',
+        ));
+        $data = $response->get_data();
+        if ( ! empty( $data['block']['id'] ) ) {
+            $this->created_post_ids[] = (int) $data['block']['id'];
+        }
+
+        $this->assertSame(200, $response->get_status());
+        $this->assertSame(AI_Block_Store::KIND_BLOCK_STYLE, $data['block']['kind']);
+        $this->assertSame('ai-rest-style-round-trip', $data['block']['name']);
+        $this->assertSame('core/quote', $data['block']['target_block']);
+        $this->assertArrayNotHasKey('render_html', $data['block']);
+    }
+
+    public function test_save_round_trips_a_block_variation_definition(): void
+    {
+        $response = $this->post_blocks(array(
+            'kind'              => 'block_variation',
+            'name'              => 'rest-variation-round-trip',
+            'title'             => 'REST Variation Round Trip',
+            'target_block'      => 'core/columns',
+            'attributes'        => array('align' => 'wide'),
+            'inner_block_names' => array('core/column', 'core/column'),
+        ));
+        $data = $response->get_data();
+        if ( ! empty( $data['block']['id'] ) ) {
+            $this->created_post_ids[] = (int) $data['block']['id'];
+        }
+
+        $this->assertSame(200, $response->get_status());
+        $this->assertSame(AI_Block_Store::KIND_BLOCK_VARIATION, $data['block']['kind']);
+        $this->assertSame('wide', $data['block']['attributes']['align']);
+        $this->assertSame(array('core/column', 'core/column'), $data['block']['inner_block_names']);
+    }
+
     public function test_delete_refuses_to_touch_a_post_that_is_not_a_block_definition(): void
     {
         // SEC-1 regression guard at the REST layer specifically (BlockStoreTest

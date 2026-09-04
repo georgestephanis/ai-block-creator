@@ -25,6 +25,12 @@ When writing a post, you shouldn't have to leave the editor or scaffold complex 
 * **1-Click Insert & Save**: Automatically registers the custom block on the site and inserts it directly onto your editor canvas.
 * **Block Library**: Every saved block appears in the AI Block Library panel (editor's More menu), where you can insert it again, reopen it for further refinement, or delete it.
 
+Not every request is best answered with a brand-new block, so the AI plans before it builds. It first decides *what kind of thing* your request should become, tells you which it picked and why, and lets you overrule it:
+
+* **A custom block** — when the request needs its own structure and its own editable fields. *"A 3-tier pricing table with feature checklists."*
+* **A block style** — when it's purely about how existing content looks. This becomes a new option in an ordinary block's Styles panel, right where you'd expect to find it. *"Make pull quotes gold with a big serif quotation mark."*
+* **A block variation** — when a core block already does the job and just needs the right settings. This becomes a ready-made preset in the inserter. *"A two-column layout with the image on the left."*
+
 AI Block Creator natively leverages the official **WordPress 7.0+ core AI Client** (`WordPress\AiClient\AiClient`), integrating with any active AI Connector configured on your site.
 
 == Installation ==
@@ -40,7 +46,10 @@ AI Block Creator natively leverages the official **WordPress 7.0+ core AI Client
 No. The plugin uses whatever AI Connector you have configured with the WordPress AI Client. You can use local LLM servers (LM Studio, Ollama, vLLM) or any supported cloud provider.
 
 = Are the generated blocks true Gutenberg blocks? =
-Yes! Generated blocks are registered using standard WordPress block APIs (`register_block_type` and `wp.blocks.registerBlockType`), with full support for sidebar inspector controls, custom attributes, and responsive scoped styles.
+Yes! Generated blocks are registered using standard WordPress block APIs (`register_block_type` and `wp.blocks.registerBlockType`), with full support for sidebar inspector controls, custom attributes, and responsive scoped styles. Generated styles and variations use the matching core APIs (`register_block_style()` and the `get_block_type_variations` filter), so they appear in the Styles panel and the inserter exactly like a theme's own would.
+
+= What if the AI picks the wrong kind of thing to build? =
+Every result tells you what it decided to build and why, with one-click buttons to rebuild the same request as either of the other two kinds instead. If the planning step fails or is unavailable, the request falls back to building a custom block.
 
 = How do screenshots work? =
 You can paste (`Cmd+V` / `Ctrl+V`), drag & drop, or select an image file (PNG, JPEG, WEBP, or GIF, up to 4MB). The image is passed to the AI prompt builder for vision-driven block creation.
@@ -54,6 +63,7 @@ Saved blocks are stored as a private custom post type. Deactivating the plugin d
 == Changelog ==
 
 = 1.0.0 =
+* Two-stage generation: requests are first classified as a custom block, a block style, or a block variation, then built accordingly — with the reasoning shown and overridable in the editor.
 * Initial release: Conversational custom block creation, voice dictation, screenshot dropzone, live preview, dynamic block registration, and WordPress AI Client integration.
 * Security hardening: saving/deleting a block now requires the `unfiltered_html` capability, and both the block's markup and its CSS are validated/sanitized before they're stored.
 * Added the AI Block Library panel for managing previously saved blocks (insert, refine, delete).

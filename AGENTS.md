@@ -29,13 +29,16 @@ ai-block-creator/
 │   │   ├── BlockLibrarySidebar.js       # PluginSidebar: list/insert/refine/delete saved blocks
 │   │   ├── BlockPreview.js              # Interactive live preview & attribute tester
 │   │   ├── ImageDropzone.js             # Drag-and-drop & clipboard paste listener
+│   │   ├── StylePreview.js              # Preview for block styles/variations (no render template)
+│   │   ├── kind-labels.js               # Shared human labels for the three definition kinds
 │   │   └── VoiceInput.js                # Web Speech API voice dictation
 │   ├── runtime/
 │   │   ├── dynamic-block-factory.js     # Client-side dynamic wp.blocks.registerBlockType
 │   │   └── test/                        # Jest tests for dynamic-block-factory.js
 │   └── styles.scss                      # Scoped editor & modal UI styling
 ├── tests/
-│   ├── php/                              # PHPUnit suite (bootstrap.php, RendererTest.php, BlockStoreTest.php)
+│   ├── php/                              # PHPUnit suite (bootstrap.php, RendererTest.php, BlockStoreTest.php,
+│   │                                     #   RestControllerTest.php, DefinitionKindsTest.php, KindRegistrationTest.php)
 │   └── js/mocks/                         # Jest module stubs — see jest-unit.config.js
 ├── build/                                # Webpack compiled output (committed — see below)
 ├── blueprint.json                        # WordPress Playground blueprint
@@ -69,6 +72,44 @@ ai-block-creator/
 - The renderer template language (`{{var}}`, `{{{raw}}}`, `{{#if}}`/`{{^if}}`, `{{#list}}`) is implemented twice — `AI_Block_Renderer::render_template()` in PHP (front end) and `interpolateTemplate()` in `dynamic-block-factory.js` (editor preview). **Keep them behaviorally identical**, including escaping rules (context-aware: `href`/`src` → URL-escaped, `style="..."` → CSS-filtered, everything else → HTML-escaped) — a divergence here is exactly the kind of bug that shipped before this was reviewed (see `plans/done/code-review-2026-09-03.md` BUG-1 through BUG-4).
 - In the Block Editor, `registerDynamicAiBlock( blockDef )` registers the block client-side immediately so that freshly created blocks can be inserted without requiring a page reload. Always register from the **server's** returned definition (e.g. the response to `POST /blocks`), not the pre-save client-side draft — the server is authoritative and may have altered the slug.
 
+### 2b. Definition Kinds & The Two-Stage Pipeline
+
+A `/generate` request no longer always produces a custom block. It runs two model
+calls: **stage one** classifies the request (`custom_block` / `block_style` /
+`block_variation` and a target block, exposed on its own as `POST /plan`), and
+**stage two** builds that kind with a kind-specific system prompt. See
+`plans/architecture-and-design.md` §3 for the full rationale and §4 for each
+kind's schema. The rules that matter when editing this code:
+
+- **`kind` is the discriminator, and its absence means `custom_block`.** Every
+  definition stored before kinds existed has no `kind` field, and they must keep
+  validating and registering unchanged. `AI_Block_Store::sanitize_kind()` and
+  `kindOf()` in `dynamic-block-factory.js` both default that way; keep them in sync.
+- **The generator never gets to choose the kind.** `generate_block()` stamps the
+  plan's `kind`/`target_block` onto the model's output *after* the call. A model
+  asked to write a style declaring itself something else would route its output
+  through the wrong normalizer and the wrong registration API.
+- **The three kinds use three different registration APIs**, and a definition sent
+  to the wrong one fails silently: `register_block_type()` for custom blocks,
+  `register_block_style()` for styles, and the `get_block_type_variations` filter
+  for variations (*not* the `variations` argument to `register_block_type()` — the
+  blocks being varied are already registered by the time this plugin loads).
+  `tests/php/KindRegistrationTest.php` guards each of those landings.
+- **Client-side, styles and variations must wait for `domReady`.** They attach to a
+  block someone else registered, and `getBlockType()` has to already know about it;
+  core's blocks come from `wp-block-library`, whose execution order relative to this
+  plugin's bundle isn't guaranteed. Custom blocks stand alone and register immediately.
+- **A variation's `attributes` are values, a custom block's are a schema.** They
+  need `sanitize_attribute_values()`, not `sanitize_attributes()`; the schema
+  sanitizer silently discards concrete values (none is an array with a `type`).
+- **A style's `name` is a published contract.** It becomes the `.is-style-{name}`
+  class written into post content, so refinement turns pin the stored name instead
+  of letting the model rename it. (Custom blocks still allow a rename on refinement
+  — a pre-existing behavior this didn't change.)
+- **Kinds share one post type and are namespaced in `post_name`** (`{slug}`,
+  `style-{slug}`, `variation-{slug}`) so a style can't overwrite the custom block
+  that happens to share its slug. Custom blocks keep their bare slug.
+
 ### 3. Frontend & Build Conventions
 - Use `@wordpress/scripts` (`npm run build` / `npm run start`). `build/` is committed to this repo (it's installed via `git:directory` — e.g. by the Playground blueprint — which doesn't run a build step), so a PR touching `src/` must include a rebuilt `build/`.
 - Standard WordPress packages: `@wordpress/element`, `@wordpress/components`, `@wordpress/block-editor`, `@wordpress/blocks`, `@wordpress/data`, `@wordpress/plugins`, `@wordpress/editor` (not the deprecated `@wordpress/edit-post`), `@wordpress/api-fetch`, `@wordpress/i18n`, `@wordpress/escape-html`.
@@ -94,7 +135,9 @@ Specifically, this codebase follows that skill's guidance on:
 
 **Deliberate divergence from that skill**: its primary recommendation is registering via `block.json` + `register_block_type_from_metadata()` ("Prefer metadata registration... keeps metadata authoritative", `references/registration.md`). We don't do this, because `block.json` is inherently a *filesystem* artifact — one file per block, authored ahead of time — and this plugin's entire premise is blocks that never exist as files: they're generated by an AI at request time and persisted in the `ai_block_def` custom post type (`AI_Block_Store`). There's no file for a `block.json` to describe. We pass the equivalent metadata as a plain array to `register_block_type()` directly, built from the stored definition, instead. (If this plugin ever grows an "export this AI block to a real `block.json` for hand-editing" feature, *that* exported code should follow the skill's metadata-registration guidance — at that point it genuinely would be a normal, file-based block.)
 
-**b) How the AI itself is instructed to *generate* a block definition** is a completely separate, plugin-specific concern: `AI_Block_REST_Controller::build_system_prompt()` gives the model a JSON schema (`name`, `title`, `icon`, `attributes`, `edit_fields`, `render_html`, `css`) and a small mustache-style template grammar (`{{var}}`, `{{{raw}}}`, `{{#if}}`/`{{^if}}`, `{{#list}}`) for the `render_html` field.
+**b) How the AI itself is instructed to *generate* a definition** is a completely separate, plugin-specific concern, and it is now four prompts rather than one. `AI_Block_REST_Controller::build_planner_system_prompt()` describes the three kinds and the decision criteria between them for stage one; `build_system_prompt()` then dispatches to `build_custom_block_prompt()`, `build_block_style_prompt()`, or `build_block_variation_prompt()` for stage two. The custom-block prompt is the original one: a JSON schema (`name`, `title`, `icon`, `attributes`, `edit_fields`, `render_html`, `css`) and a small mustache-style template grammar (`{{var}}`, `{{{raw}}}`, `{{#if}}`/`{{^if}}`, `{{#list}}`) for the `render_html` field.
+
+Each stage-two prompt must stay honest about what its kind can actually deliver — a style prompt that talked about editable fields, or a variation prompt that talked about custom markup, would be describing a pipeline that doesn't exist. The planner prompt's decision criteria and the candidate target-block list are equally live surface: `candidate_target_blocks()` is what bounds the planner's `target_block`, and `AI_Block_Store::sanitize_target_block()` rejects anything outside the site's registry regardless.
 
 That grammar is **not** sourced from WordPress/Gutenberg documentation or the skill above — it's an original micro-templating language invented for this plugin, because Gutenberg's normal attribute-interpolation mechanisms (`block.json` `source`/`selector`, PHP string concatenation) aren't expressible in a single JSON field an LLM can reliably emit in one pass. It's implemented independently in `AI_Block_Renderer::render_template()` (PHP) and `interpolateTemplate()` (`dynamic-block-factory.js`); see §2 above ("Block Registration & Persistence Lifecycle") for the requirement to keep those two implementations behaviorally identical. If you change the grammar, the system prompt text describing it to the model must change too, and vice versa.
 

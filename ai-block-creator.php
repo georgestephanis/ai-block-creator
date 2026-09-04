@@ -134,7 +134,7 @@ add_filter(
  * on pages/editor sessions where the block is actually present.
  */
 function register_dynamic_blocks(): void {
-	foreach ( AI_Block_Store::all() as $def ) {
+	foreach ( AI_Block_Store::by_kind( AI_Block_Store::KIND_CUSTOM_BLOCK ) as $def ) {
 		if ( empty( $def['name'] ) ) {
 			continue;
 		}
@@ -180,6 +180,113 @@ function register_dynamic_blocks(): void {
 	}
 }
 add_action( 'init', __NAMESPACE__ . '\\register_dynamic_blocks', 10 );
+
+/**
+ * Registers every stored `block_style` definition against its target block.
+ *
+ * Unlike a custom block, a style adds no markup and no render callback: it
+ * contributes a `.is-style-{name}` class the author can toggle from the
+ * target block's Styles panel, plus the CSS that class selects. WordPress
+ * enqueues that CSS only on pages where the target block actually appears.
+ *
+ * Runs at priority 20 so core's own block types (registered at priority 10)
+ * exist by the time AI_Block_Store validates each style's `target_block`
+ * against the registry.
+ */
+function register_ai_block_styles(): void {
+	foreach ( AI_Block_Store::by_kind( AI_Block_Store::KIND_BLOCK_STYLE ) as $def ) {
+		if ( empty( $def['name'] ) || empty( $def['target_block'] ) ) {
+			continue;
+		}
+
+		$style = array(
+			'name'  => $def['name'],
+			'label' => $def['label'] ?? $def['title'] ?? $def['name'],
+		);
+
+		if ( ! empty( $def['css'] ) ) {
+			$style['inline_style'] = $def['css'];
+		}
+
+		register_block_style( $def['target_block'], $style );
+	}
+}
+add_action( 'init', __NAMESPACE__ . '\\register_ai_block_styles', 20 );
+
+/**
+ * Appends stored `block_variation` definitions to their target block type.
+ *
+ * Variations are attached through the `get_block_type_variations` filter
+ * rather than the `variations` argument to register_block_type(), because the
+ * blocks being varied are already registered by the time this plugin loads --
+ * core registers its own blocks on `init`, and passing `variations` only has
+ * an effect at the moment a block type is created. The filter is the
+ * supported way to add a variation to somebody else's block.
+ *
+ * @param array<int, array<string, mixed>> $variations Existing variations.
+ * @param \WP_Block_Type                   $block_type Block type being queried.
+ * @return array<int, array<string, mixed>>
+ */
+function filter_ai_block_variations( array $variations, \WP_Block_Type $block_type ): array {
+	foreach ( AI_Block_Store::by_kind( AI_Block_Store::KIND_BLOCK_VARIATION ) as $def ) {
+		if ( empty( $def['name'] ) || ( $def['target_block'] ?? '' ) !== $block_type->name ) {
+			continue;
+		}
+
+		$variation = array(
+			'name'        => $def['name'],
+			'title'       => $def['title'] ?? $def['name'],
+			'description' => $def['description'] ?? '',
+			'icon'        => $def['icon'] ?? 'star-filled',
+			'attributes'  => $def['attributes'] ?? array(),
+			'scope'       => array( 'inserter', 'transform' ),
+		);
+
+		if ( ! empty( $def['inner_block_names'] ) && is_array( $def['inner_block_names'] ) ) {
+			$variation['innerBlocks'] = array_map(
+				static function ( string $inner_name ): array {
+					return array( $inner_name );
+				},
+				$def['inner_block_names']
+			);
+		}
+
+		$variations[] = $variation;
+	}
+
+	return $variations;
+}
+add_filter( 'get_block_type_variations', __NAMESPACE__ . '\\filter_ai_block_variations', 10, 2 );
+
+/**
+ * Registers the CSS a variation carries, if any.
+ *
+ * A variation is primarily an attribute preset and usually needs no CSS at
+ * all, but when it does (a `className` preset that nothing styles otherwise)
+ * the stylesheet has to be enqueued for the *target* block, since that is the
+ * block that will actually be on the page. wp_enqueue_block_style() attaches
+ * it to that block type so it still loads only where the block is used.
+ */
+function register_ai_variation_styles(): void {
+	foreach ( AI_Block_Store::by_kind( AI_Block_Store::KIND_BLOCK_VARIATION ) as $def ) {
+		if ( empty( $def['css'] ) || empty( $def['target_block'] ) || empty( $def['name'] ) ) {
+			continue;
+		}
+
+		$handle = register_block_style_handle( 'variation-' . $def['name'], $def['css'] );
+		if ( ! $handle ) {
+			continue;
+		}
+
+		wp_enqueue_block_style(
+			$def['target_block'],
+			array(
+				'handle' => $handle,
+			)
+		);
+	}
+}
+add_action( 'init', __NAMESPACE__ . '\\register_ai_variation_styles', 20 );
 
 /**
  * Registers (or updates) a per-block inline stylesheet handle, only when the
@@ -286,6 +393,7 @@ function enqueue_editor_assets(): void {
 		: array(
 			'dependencies' => array(
 				'wp-blocks',
+				'wp-dom-ready',
 				'wp-element',
 				'wp-components',
 				'wp-block-editor',

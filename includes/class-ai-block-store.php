@@ -39,6 +39,42 @@ class AI_Block_Store {
 	public const META_KEY = '_ai_block_definition';
 
 	/**
+	 * Definition kind: a brand-new dynamic `ai-block/{slug}` block rendered by
+	 * AI_Block_Renderer. The historical (and still default) kind.
+	 *
+	 * @var string
+	 */
+	public const KIND_CUSTOM_BLOCK = 'custom_block';
+
+	/**
+	 * Definition kind: a block style registered against an existing block via
+	 * register_block_style(). Contributes CSS only — the target block renders
+	 * itself, with one extra `is-style-{name}` class.
+	 *
+	 * @var string
+	 */
+	public const KIND_BLOCK_STYLE = 'block_style';
+
+	/**
+	 * Definition kind: a block variation (a named attribute/inner-block preset)
+	 * registered against an existing block.
+	 *
+	 * @var string
+	 */
+	public const KIND_BLOCK_VARIATION = 'block_variation';
+
+	/**
+	 * Every recognized definition kind.
+	 *
+	 * @var string[]
+	 */
+	public const ALLOWED_KINDS = array(
+		self::KIND_CUSTOM_BLOCK,
+		self::KIND_BLOCK_STYLE,
+		self::KIND_BLOCK_VARIATION,
+	);
+
+	/**
 	 * Cache group for in-request/object-cache memoization.
 	 *
 	 * @var string
@@ -150,6 +186,50 @@ class AI_Block_Store {
 	}
 
 	/**
+	 * Returns every stored definition of a given kind.
+	 *
+	 * @param string $kind One of the KIND_* constants.
+	 * @return array<int, array<string, mixed>>
+	 */
+	public static function by_kind( string $kind ): array {
+		$kind = self::sanitize_kind( $kind );
+
+		return array_values(
+			array_filter(
+				self::all(),
+				static function ( array $def ) use ( $kind ): bool {
+					return self::sanitize_kind( $def['kind'] ?? '' ) === $kind;
+				}
+			)
+		);
+	}
+
+	/**
+	 * Builds the `post_name` a definition is stored under.
+	 *
+	 * Kinds share one post type, and post_name is the uniqueness key used to
+	 * decide create-vs-update, so the kinds are namespaced against each other:
+	 * without this, a style named "callout" would overwrite the custom block
+	 * named "callout" (and vice versa) on save. Custom blocks keep their bare
+	 * slug so definitions saved before kinds existed still resolve.
+	 *
+	 * @param array<string, mixed> $normalized A definition that has already been normalized.
+	 * @return string
+	 */
+	private static function post_slug_for( array $normalized ): string {
+		$name = (string) ( $normalized['name'] ?? '' );
+
+		switch ( self::sanitize_kind( $normalized['kind'] ?? '' ) ) {
+			case self::KIND_BLOCK_STYLE:
+				return 'style-' . $name;
+			case self::KIND_BLOCK_VARIATION:
+				return 'variation-' . $name;
+			default:
+				return str_replace( 'ai-block/', '', $name );
+		}
+	}
+
+	/**
 	 * Saves (creates or updates) a block definition after strict validation.
 	 *
 	 * @param array<string, mixed> $def   Raw, untrusted definition (e.g. from the REST request body).
@@ -158,7 +238,7 @@ class AI_Block_Store {
 	 */
 	public static function save( array $def, string $title_fallback = 'AI Block' ) {
 		$normalized = self::normalize_and_validate( $def, $title_fallback );
-		$slug       = str_replace( 'ai-block/', '', $normalized['name'] );
+		$slug       = self::post_slug_for( $normalized );
 
 		$existing_posts = get_posts(
 			array(
@@ -230,7 +310,257 @@ class AI_Block_Store {
 	}
 
 	/**
-	 * Strictly normalizes and validates an untrusted block definition.
+	 * Strictly normalizes and validates an untrusted definition of any kind.
+	 *
+	 * A definition's `kind` decides which shape it must conform to, and each
+	 * kind has its own allowlist: a `custom_block` keeps the historical
+	 * render_html/attributes/edit_fields shape, while a `block_style` or
+	 * `block_variation` targets an already-registered block and carries no
+	 * render template at all. An unrecognized or absent `kind` falls back to
+	 * `custom_block`, so definitions stored before kinds existed keep
+	 * validating (and registering) exactly as they always did.
+	 *
+	 * @param array<string, mixed> $def            Raw definition.
+	 * @param string               $title_fallback Fallback title.
+	 * @return array<string, mixed>
+	 */
+	public static function normalize_and_validate( array $def, string $title_fallback = 'AI Block' ): array {
+		switch ( self::sanitize_kind( $def['kind'] ?? '' ) ) {
+			case self::KIND_BLOCK_STYLE:
+				return self::normalize_block_style( $def, $title_fallback );
+			case self::KIND_BLOCK_VARIATION:
+				return self::normalize_block_variation( $def, $title_fallback );
+			default:
+				return self::normalize_custom_block( $def, $title_fallback );
+		}
+	}
+
+	/**
+	 * Normalizes a block style definition.
+	 *
+	 * A style contributes nothing but a name, a human label, and CSS scoped to
+	 * the `.is-style-{name}` class WordPress adds to the target block. There is
+	 * deliberately no render_html/attributes handling here: the target block
+	 * still renders itself, so AI_Block_Renderer is never involved and there is
+	 * no template for a caller to smuggle markup through.
+	 *
+	 * @param array<string, mixed> $def            Raw definition.
+	 * @param string               $title_fallback Fallback label.
+	 * @return array<string, mixed>
+	 */
+	private static function normalize_block_style( array $def, string $title_fallback ): array {
+		$label = ! empty( $def['label'] ) && is_string( $def['label'] )
+			? sanitize_text_field( $def['label'] )
+			: ( ! empty( $def['title'] ) && is_string( $def['title'] ) ? sanitize_text_field( $def['title'] ) : $title_fallback );
+
+		$slug = self::style_or_variation_slug( $def, $label, 'style' );
+
+		$normalized = array(
+			'kind'         => self::KIND_BLOCK_STYLE,
+			'name'         => $slug,
+			'label'        => $label,
+			'title'        => $label,
+			'description'  => sanitize_text_field( (string) ( $def['description'] ?? '' ) ),
+			'target_block' => self::sanitize_target_block( (string) ( $def['target_block'] ?? '' ) ),
+			'css'          => self::sanitize_css( is_string( $def['css'] ?? null ) ? $def['css'] : '' ),
+		);
+
+		if ( ! empty( $def['id'] ) ) {
+			$normalized['id'] = (int) $def['id'];
+		}
+
+		return $normalized;
+	}
+
+	/**
+	 * Normalizes a block variation definition.
+	 *
+	 * Note the difference from a custom block's `attributes`: those are a
+	 * Gutenberg attribute *schema* (`{ type, default }` per key), whereas a
+	 * variation's are concrete attribute *values* to preset on the target
+	 * block. They therefore go through sanitize_attribute_values(), not
+	 * sanitize_attributes(); running the schema sanitizer over them would
+	 * discard every one of them (none is an array with a `type`).
+	 *
+	 * @param array<string, mixed> $def            Raw definition.
+	 * @param string               $title_fallback Fallback title.
+	 * @return array<string, mixed>
+	 */
+	private static function normalize_block_variation( array $def, string $title_fallback ): array {
+		$title = ! empty( $def['title'] ) && is_string( $def['title'] )
+			? sanitize_text_field( $def['title'] )
+			: $title_fallback;
+
+		$slug = self::style_or_variation_slug( $def, $title, 'variation' );
+
+		$normalized = array(
+			'kind'              => self::KIND_BLOCK_VARIATION,
+			'name'              => $slug,
+			'title'             => $title,
+			'description'       => sanitize_text_field( (string) ( $def['description'] ?? '' ) ),
+			'icon'              => self::sanitize_icon( (string) ( $def['icon'] ?? 'star-filled' ) ),
+			'target_block'      => self::sanitize_target_block( (string) ( $def['target_block'] ?? '' ) ),
+			'attributes'        => self::sanitize_attribute_values( is_array( $def['attributes'] ?? null ) ? $def['attributes'] : array() ),
+			'inner_block_names' => self::sanitize_inner_block_names( is_array( $def['inner_block_names'] ?? null ) ? $def['inner_block_names'] : array() ),
+			'css'               => self::sanitize_css( is_string( $def['css'] ?? null ) ? $def['css'] : '' ),
+		);
+
+		if ( ! empty( $def['id'] ) ) {
+			$normalized['id'] = (int) $def['id'];
+		}
+
+		return $normalized;
+	}
+
+	/**
+	 * Builds the slug (and registered name) for a style or variation.
+	 *
+	 * Both are namespaced with an `ai-` prefix so an AI-authored style is
+	 * visibly distinct from a theme's or core's own in the Styles panel, and
+	 * so the generated CSS class (`.is-style-ai-…`) can't collide with one
+	 * the target block already ships.
+	 *
+	 * @param array<string, mixed> $def      Raw definition.
+	 * @param string               $fallback Label/title to derive a slug from when none is given.
+	 * @param string               $context  'style' or 'variation'; used only for the random fallback.
+	 * @return string
+	 */
+	private static function style_or_variation_slug( array $def, string $fallback, string $context ): string {
+		$raw  = ! empty( $def['name'] ) && is_string( $def['name'] ) ? $def['name'] : $fallback;
+		$slug = sanitize_title( $raw );
+
+		if ( '' === $slug ) {
+			$slug = $context . '-' . substr( md5( $fallback . microtime() ), 0, 8 );
+		}
+
+		return str_starts_with( $slug, 'ai-' ) ? $slug : 'ai-' . $slug;
+	}
+
+	/**
+	 * Allowlists a definition kind, defaulting to `custom_block`.
+	 *
+	 * @param mixed $kind Raw kind.
+	 * @return string
+	 */
+	public static function sanitize_kind( $kind ): string {
+		$kind = is_string( $kind ) ? strtolower( trim( $kind ) ) : '';
+
+		return in_array( $kind, self::ALLOWED_KINDS, true ) ? $kind : self::KIND_CUSTOM_BLOCK;
+	}
+
+	/**
+	 * Validates a `namespace/name` target block reference.
+	 *
+	 * The format is always enforced. Membership in the block registry is only
+	 * enforced when the registry is actually populated: normalize_and_validate()
+	 * also runs from the `_ai_block_definition` meta sanitize callback, which
+	 * can fire before `init` has registered any block type, and rejecting every
+	 * target there would silently blank out stored definitions.
+	 *
+	 * @param string $target_block Raw target block name.
+	 * @return string Valid block name, or the `core/group` fallback.
+	 */
+	private static function sanitize_target_block( string $target_block ): string {
+		$fallback     = 'core/group';
+		$target_block = strtolower( trim( $target_block ) );
+
+		if ( ! preg_match( '#^[a-z][a-z0-9-]*/[a-z][a-z0-9-]*$#', $target_block ) ) {
+			return $fallback;
+		}
+
+		$registered = self::registered_block_names();
+		if ( ! empty( $registered ) && ! in_array( $target_block, $registered, true ) ) {
+			return $fallback;
+		}
+
+		return $target_block;
+	}
+
+	/**
+	 * Returns every currently registered block name, or an empty array when the
+	 * registry isn't available/populated yet.
+	 *
+	 * @return string[]
+	 */
+	public static function registered_block_names(): array {
+		if ( ! class_exists( '\\WP_Block_Type_Registry' ) ) {
+			return array();
+		}
+
+		return array_keys( \WP_Block_Type_Registry::get_instance()->get_all_registered() );
+	}
+
+	/**
+	 * Sanitizes a flat map of concrete attribute *values* (as opposed to an
+	 * attribute schema — see sanitize_attributes()).
+	 *
+	 * Values may be scalars, or one level of array/object containing scalars
+	 * (enough for e.g. `style.color.background`-shaped presets); anything
+	 * deeper is dropped rather than recursed into, so a definition can't carry
+	 * an unbounded nested payload into post meta.
+	 *
+	 * @param array<string, mixed> $values Raw attribute values.
+	 * @param int                  $depth  Current recursion depth; callers should omit it.
+	 * @return array<string, mixed>
+	 */
+	private static function sanitize_attribute_values( array $values, int $depth = 0 ): array {
+		$clean = array();
+
+		foreach ( $values as $key => $value ) {
+			$key = self::sanitize_identifier( (string) $key );
+			if ( '' === $key ) {
+				continue;
+			}
+
+			if ( is_bool( $value ) || is_int( $value ) || is_float( $value ) ) {
+				$clean[ $key ] = $value;
+			} elseif ( is_string( $value ) ) {
+				$clean[ $key ] = sanitize_text_field( $value );
+			} elseif ( is_array( $value ) && $depth < 2 ) {
+				$clean[ $key ] = self::sanitize_attribute_values( $value, $depth + 1 );
+			}
+		}
+
+		return $clean;
+	}
+
+	/**
+	 * Validates the flat list of inner block names a variation should be
+	 * scaffolded with. Deliberately a flat list, not a recursive innerBlocks
+	 * template: one level covers the cases this is for (a two-column layout, a
+	 * heading-plus-paragraph pairing) without inviting an AI to emit an
+	 * arbitrarily deep tree that has to be validated node by node.
+	 *
+	 * @param array<int, mixed> $names Raw inner block names.
+	 * @return string[]
+	 */
+	private static function sanitize_inner_block_names( array $names ): array {
+		$clean = array();
+
+		foreach ( array_slice( $names, 0, 10 ) as $name ) {
+			if ( ! is_string( $name ) ) {
+				continue;
+			}
+
+			$requested = strtolower( trim( $name ) );
+			$validated = self::sanitize_target_block( $requested );
+
+			// sanitize_target_block() falls back to core/group for anything it
+			// can't validate. For a *target* that's a sensible default, but an
+			// unrecognized inner block should be dropped, not silently turned
+			// into a Group nested inside the variation's markup.
+			if ( $validated !== $requested ) {
+				continue;
+			}
+
+			$clean[] = $validated;
+		}
+
+		return $clean;
+	}
+
+	/**
+	 * Strictly normalizes and validates an untrusted `custom_block` definition.
 	 *
 	 * Every field is allowlisted; unknown top-level keys are dropped so
 	 * arbitrary data can never ride along into post meta. `render_html` is
@@ -242,7 +572,7 @@ class AI_Block_Store {
 	 * @param string               $title_fallback Fallback title.
 	 * @return array<string, mixed>
 	 */
-	public static function normalize_and_validate( array $def, string $title_fallback = 'AI Block' ): array {
+	private static function normalize_custom_block( array $def, string $title_fallback ): array {
 		$title = ! empty( $def['title'] ) && is_string( $def['title'] ) ? sanitize_text_field( $def['title'] ) : $title_fallback;
 
 		$slug = ! empty( $def['name'] ) && is_string( $def['name'] )
@@ -253,6 +583,7 @@ class AI_Block_Store {
 		}
 
 		$normalized = array(
+			'kind'        => self::KIND_CUSTOM_BLOCK,
 			'name'        => 'ai-block/' . $slug,
 			'title'       => $title,
 			'description' => sanitize_text_field( (string) ( $def['description'] ?? 'Custom block created with AI' ) ),

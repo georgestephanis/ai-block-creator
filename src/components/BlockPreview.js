@@ -11,7 +11,10 @@ import {
 	interpolateTemplate,
 	injectBlockStyles,
 	renderEditField,
+	kindOf,
+	KIND_CUSTOM_BLOCK,
 } from '../runtime/dynamic-block-factory';
+import StylePreview from './StylePreview';
 
 /**
  * Builds the default attribute values for a block definition.
@@ -57,6 +60,12 @@ export default function BlockPreview( { blockDef } ) {
 
 	if ( ! blockDef ) {
 		return null;
+	}
+
+	// Styles and variations have no render template to interpolate; they get
+	// their own summary view instead of the live-preview tabs below.
+	if ( kindOf( blockDef ) !== KIND_CUSTOM_BLOCK ) {
+		return <StylePreview blockDef={ blockDef } />;
 	}
 
 	const editFields = blockDef.edit_fields || [];

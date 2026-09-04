@@ -49,7 +49,74 @@ Users can:
 
 ---
 
-## 3. Data Schema for AI Block Definition
+## 3. Two-Stage Generation: Planning, Then Building
+
+Not every "make me a block for X" request should become a block. A large class of
+them is really "make an existing block look or behave like X" — and answering
+those with a bespoke `ai-block/*` block produces something less discoverable and
+more fragile than the thing WordPress already has for the job. So generation runs
+in two stages.
+
+**Stage one — planning** (`POST /ai-block-creator/v1/plan`, or implicitly inside
+`/generate`). A small, fast model call classifies the request into one of three
+kinds and names a target block. It writes no code. It returns:
+
+```json
+{ "kind": "block_style", "target_block": "core/quote", "rationale": "One sentence for the author." }
+```
+
+| kind | Registered via | What the author gets |
+| --- | --- | --- |
+| `custom_block` | `register_block_type()` + `AI_Block_Renderer` | A brand-new block with its own fields, in the AI Custom Blocks category |
+| `block_style` | `register_block_style()` | A new option in an existing block's Styles panel; CSS only |
+| `block_variation` | the `get_block_type_variations` filter | A preset of an existing block in the inserter |
+
+`target_block` is validated against a curated candidate list intersected with the
+site's block registry (`AI_Block_REST_Controller::candidate_target_blocks()`,
+filterable via `ai_block_creator_target_block_candidates`). The whole registry is
+neither useful nor safe to put in a prompt: a site with a dozen plugins has
+hundreds of registered blocks, most of which nobody wants an AI-authored style on.
+
+If the planner fails for any reason, the request falls back to `custom_block` —
+what this plugin did for every request before planning existed — rather than
+failing outright. The returned `plan.source` (`planner`, `explicit`, `refinement`,
+or `fallback`) says which path produced the decision, so the UI can tell the
+author when the model wasn't actually consulted.
+
+**Stage two — building.** The planned kind selects the system prompt
+(`build_block_style_prompt()`, `build_block_variation_prompt()`, or
+`build_custom_block_prompt()`), and the plan's `kind`/`target_block` are stamped
+onto the result afterwards. The generator does not get to re-decide what it is
+building: a model asked to write a style has no reason to be trusted to declare
+itself something else, and letting it contradict the plan would route the output
+through the wrong normalizer and the wrong registration API.
+
+The author can override the decision from the modal ("Build this as: …"), which
+sends an explicit `kind` and skips stage one. A *refinement* turn keeps the kind
+of the definition being refined, so a follow-up can't silently turn a saved style
+into a new block.
+
+### Kind precedence and storage
+
+All three kinds share the `ai_block_def` post type, discriminated by a `kind`
+field. A definition with no `kind` is a `custom_block` — that's every definition
+saved before this existed, and they keep validating and registering exactly as
+they always did.
+
+Because `post_name` is the uniqueness key that decides create-vs-update, kinds are
+namespaced against each other (`{slug}`, `style-{slug}`, `variation-{slug}`);
+without that, saving a style named "callout" would overwrite the custom block
+named "callout". Custom blocks keep their bare slug for backward compatibility.
+
+A style's `name` is also its `.is-style-{name}` class, already written into every
+post that uses it, so refinements pin the stored name rather than letting the
+model rename it and orphan that content.
+
+---
+
+## 4. Data Schema for AI Block Definition
+
+### 4.1 `custom_block` (the default kind)
 
 ```json
 {
@@ -89,9 +156,59 @@ The `render_html` mini-template language supports:
 
 This grammar is implemented twice and must stay in sync: `AI_Block_Renderer::render_template()` (PHP, front end) and `interpolateTemplate()` in `src/runtime/dynamic-block-factory.js` (editor preview).
 
+### 4.2 `block_style`
+
+CSS and nothing else. No `render_html`, no `attributes`, no `edit_fields` — the
+target block renders itself, with one extra class. `AI_Block_Renderer` is never
+involved, so there is no template for a caller to smuggle markup through.
+
+```json
+{
+  "kind": "block_style",
+  "name": "ai-gold-pullquote",
+  "label": "Gold Pull-Quote",
+  "description": "Gold accents and a prominent serif quotation mark.",
+  "target_block": "core/pullquote",
+  "css": ".is-style-ai-gold-pullquote { … }"
+}
+```
+
+Every selector in `css` must be scoped to `.is-style-{name}`. That's enforced by
+the prompt, not by a parser — unscoped selectors are a style-bleed bug, not a
+security one, and the same `sanitize_css()` pass that protects custom blocks
+(stripping `<script>`/`<style>`/`@import`/`expression()`/`javascript:`) applies here.
+
+### 4.3 `block_variation`
+
+A named preset of an existing block.
+
+```json
+{
+  "kind": "block_variation",
+  "name": "ai-two-col-feature",
+  "title": "Two Column Feature",
+  "icon": "columns",
+  "target_block": "core/media-text",
+  "attributes": { "align": "wide", "mediaPosition": "left" },
+  "inner_block_names": [ "core/column", "core/column" ],
+  "css": ""
+}
+```
+
+Note that a variation's `attributes` are concrete **values** to preset on the
+target block, not the `{ type, default }` **schema** a custom block declares.
+They go through `sanitize_attribute_values()`, not `sanitize_attributes()`;
+running the schema sanitizer over them would discard every one.
+
+`inner_block_names` is a flat, length-capped list of block names, not a recursive
+`innerBlocks` template. One level covers the cases this is for (a two-column
+layout, a heading-plus-paragraph pairing) without inviting an AI to emit an
+arbitrarily deep tree that has to be validated node by node. Names that aren't
+registered on the site are dropped rather than substituted.
+
 ---
 
-## 4. Verification & Testing Strategy
+## 5. Verification & Testing Strategy
 - Verify PHP syntax and plugin activation via WP-CLI.
 - Verify REST endpoint responses using `wp_ai_client_prompt()`.
 - Test voice dictation fallback and screenshot handling.

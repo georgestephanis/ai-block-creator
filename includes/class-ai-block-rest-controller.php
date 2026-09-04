@@ -95,6 +95,42 @@ class AI_Block_REST_Controller extends WP_REST_Controller {
 							'properties'           => array(),
 							'additionalProperties' => true,
 						),
+						'kind'          => array(
+							'type'        => 'string',
+							'required'    => false,
+							'enum'        => AI_Block_Store::ALLOWED_KINDS,
+							'description' => 'Optional explicit output kind, skipping the planning stage.',
+						),
+						'target_block'  => array(
+							'type'        => 'string',
+							'required'    => false,
+							'description' => 'Target block name for a block_style/block_variation, e.g. core/quote.',
+						),
+					),
+				),
+			)
+		);
+
+		// Planning endpoint (stage one).
+		register_rest_route(
+			$this->namespace,
+			'/plan',
+			array(
+				array(
+					'methods'             => WP_REST_Server::CREATABLE,
+					'callback'            => array( $this, 'plan_request' ),
+					'permission_callback' => array( $this, 'check_generate_permissions' ),
+					'args'                => array(
+						'prompt' => array(
+							'type'        => 'string',
+							'required'    => true,
+							'description' => 'User prompt to classify.',
+						),
+						'image'  => array(
+							'type'        => 'string',
+							'required'    => false,
+							'description' => 'Optional base64 image data URI for screenshot-to-block.',
+						),
 					),
 				),
 			)
@@ -169,22 +205,303 @@ class AI_Block_REST_Controller extends WP_REST_Controller {
 	 * @return WP_REST_Response|WP_Error
 	 */
 	public function generate_block( WP_REST_Request $request ) {
-		$prompt        = trim( (string) wp_check_invalid_utf8( (string) $request->get_param( 'prompt' ) ) );
+		$prompt        = $this->normalize_prompt( (string) $request->get_param( 'prompt' ) );
 		$image         = $request->get_param( 'image' );
 		$history       = $request->get_param( 'history' ) ?? array();
 		$current_block = $request->get_param( 'current_block' );
 
-		if ( empty( $prompt ) && empty( $image ) ) {
+		if ( '' === $prompt && empty( $image ) ) {
 			return new WP_Error( 'empty_prompt', __( 'Prompt cannot be empty.', 'ai-block-creator' ), array( 'status' => 400 ) );
 		}
-		if ( empty( $prompt ) && ! empty( $image ) ) {
+		if ( '' === $prompt && ! empty( $image ) ) {
 			$prompt = __( 'Recreate this screenshot as a WordPress block.', 'ai-block-creator' );
 		}
 
-		if ( mb_strlen( $prompt ) > 4000 ) {
-			$prompt = mb_substr( $prompt, 0, 4000 );
+		$precheck = $this->check_ai_availability( $image );
+		if ( is_wp_error( $precheck ) ) {
+			return $precheck;
 		}
 
+		$validated_image = $this->validate_image_data_uri( $image );
+		if ( is_wp_error( $validated_image ) ) {
+			return $validated_image;
+		}
+
+		$plan = $this->resolve_plan( $request, $prompt, $validated_image, is_array( $current_block ) ? $current_block : null );
+
+		$user_content = "User Request:\n" . $prompt;
+		if ( ! empty( $current_block ) ) {
+			$user_content .= "\n\nCurrent Definition to Refine/Update:\n" . wp_json_encode( $current_block, JSON_PRETTY_PRINT );
+		}
+		if ( AI_Block_Store::KIND_CUSTOM_BLOCK !== $plan['kind'] ) {
+			$user_content .= "\n\nTarget block (decided in planning): " . $plan['target_block'];
+		}
+
+		$parsed_json = $this->request_json_from_model(
+			$this->build_system_prompt( $plan['kind'], $plan['target_block'] ),
+			$user_content,
+			$validated_image,
+			is_array( $history ) ? $history : array()
+		);
+
+		if ( is_wp_error( $parsed_json ) ) {
+			return $parsed_json;
+		}
+
+		// The planner, not the generator, owns these two fields: a model asked
+		// to write a style has no reason to be trusted to re-decide that it is
+		// a style, and letting it contradict the plan would silently route the
+		// result through the wrong normalizer and the wrong registration path.
+		$parsed_json['kind']         = $plan['kind'];
+		$parsed_json['target_block'] = $plan['target_block'];
+
+		// Preserve the incoming name/slug when refining, so a follow-up
+		// turn doesn't accidentally rename (and thereby fork) the definition.
+		if ( ! empty( $current_block['name'] ) ) {
+			// For a style or variation the name isn't just an identifier: a
+			// style's name IS the `.is-style-{name}` class already written
+			// into every post using it, so a rename here would orphan that
+			// content behind a class nothing registers any more. Models do
+			// rename on refinement even when told not to, so the stored name
+			// wins outright rather than only filling in a blank one.
+			$keep_name = AI_Block_Store::KIND_CUSTOM_BLOCK !== $plan['kind'] || empty( $parsed_json['name'] );
+
+			if ( $keep_name ) {
+				$parsed_json['name'] = $current_block['name'];
+			}
+		}
+
+		$normalized_block = AI_Block_Store::normalize_and_validate( $parsed_json, $prompt );
+
+		return new WP_REST_Response(
+			array(
+				'success' => true,
+				'plan'    => $plan,
+				'block'   => $normalized_block,
+			),
+			200
+		);
+	}
+
+	/**
+	 * Stage one: classifies a request into the kind of thing that should be
+	 * built, without generating anything.
+	 *
+	 * Exposed as its own route so the editor can show the decision (and let the
+	 * author override it) before spending a much larger generation call on it.
+	 *
+	 * @param WP_REST_Request $request REST request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function plan_request( WP_REST_Request $request ) {
+		$prompt = $this->normalize_prompt( (string) $request->get_param( 'prompt' ) );
+		$image  = $request->get_param( 'image' );
+
+		if ( '' === $prompt && empty( $image ) ) {
+			return new WP_Error( 'empty_prompt', __( 'Prompt cannot be empty.', 'ai-block-creator' ), array( 'status' => 400 ) );
+		}
+
+		$precheck = $this->check_ai_availability( $image );
+		if ( is_wp_error( $precheck ) ) {
+			return $precheck;
+		}
+
+		$validated_image = $this->validate_image_data_uri( $image );
+		if ( is_wp_error( $validated_image ) ) {
+			return $validated_image;
+		}
+
+		return new WP_REST_Response(
+			array(
+				'success' => true,
+				'plan'    => $this->plan_output_kind( $prompt, $validated_image ),
+			),
+			200
+		);
+	}
+
+	/**
+	 * Decides which plan a generation request should run under.
+	 *
+	 * Precedence, highest first:
+	 *  1. The definition being refined — a follow-up turn must not silently
+	 *     change a saved style into a custom block.
+	 *  2. An explicit `kind` param — the author overrode the planner in the UI.
+	 *  3. Stage one: ask the model.
+	 *
+	 * @param WP_REST_Request                             $request       REST request.
+	 * @param string                                      $prompt        Normalized prompt.
+	 * @param array{data: string, mime_type: string}|null $image Validated image, if any.
+	 * @param array<string, mixed>|null                   $current_block Definition being refined, if any.
+	 * @return array{kind: string, target_block: string, rationale: string, source: string}
+	 */
+	private function resolve_plan( WP_REST_Request $request, string $prompt, ?array $image, ?array $current_block ): array {
+		if ( ! empty( $current_block['kind'] ) ) {
+			// The stored target is passed through as-is rather than re-checked
+			// against candidate_target_blocks(): it was already validated
+			// against the full block registry when it was saved, and that list
+			// is a curation of what to *offer*, not of what is legal. Narrowing
+			// it here would silently retarget a saved style on its next
+			// refinement.
+			$stored_target = strtolower( trim( (string) ( $current_block['target_block'] ?? '' ) ) );
+
+			return array(
+				'kind'         => AI_Block_Store::sanitize_kind( $current_block['kind'] ),
+				'target_block' => preg_match( '#^[a-z][a-z0-9-]*/[a-z][a-z0-9-]*$#', $stored_target ) ? $stored_target : '',
+				'rationale'    => __( 'Continuing to refine the existing definition.', 'ai-block-creator' ),
+				'source'       => 'refinement',
+			);
+		}
+
+		$requested_kind = $request->get_param( 'kind' );
+		if ( is_string( $requested_kind ) && in_array( $requested_kind, AI_Block_Store::ALLOWED_KINDS, true ) ) {
+			return array(
+				'kind'         => $requested_kind,
+				'target_block' => $this->sanitize_target_block_param( (string) ( $request->get_param( 'target_block' ) ?? '' ) ),
+				'rationale'    => __( 'Chosen explicitly for this request.', 'ai-block-creator' ),
+				'source'       => 'explicit',
+			);
+		}
+
+		return $this->plan_output_kind( $prompt, $image );
+	}
+
+	/**
+	 * Runs the planning model call, degrading to a custom block on any failure.
+	 *
+	 * A planner that errors out must not take the whole request down with it:
+	 * building a new custom block is what this plugin did for every request
+	 * before planning existed, so it is the safe default. The returned
+	 * `source` says which path produced the answer, so the UI can tell the
+	 * author when the model was not actually consulted.
+	 *
+	 * @param string                                      $prompt Normalized prompt.
+	 * @param array{data: string, mime_type: string}|null $image  Validated image, if any.
+	 * @return array{kind: string, target_block: string, rationale: string, source: string}
+	 */
+	private function plan_output_kind( string $prompt, ?array $image ): array {
+		$fallback = array(
+			'kind'         => AI_Block_Store::KIND_CUSTOM_BLOCK,
+			'target_block' => '',
+			'rationale'    => __( 'Defaulted to a new custom block.', 'ai-block-creator' ),
+			'source'       => 'fallback',
+		);
+
+		$parsed = $this->request_json_from_model(
+			$this->build_planner_system_prompt(),
+			"User Request:\n" . $prompt,
+			$image,
+			array()
+		);
+
+		if ( is_wp_error( $parsed ) || empty( $parsed['kind'] ) ) {
+			return $fallback;
+		}
+
+		$kind = AI_Block_Store::sanitize_kind( $parsed['kind'] );
+
+		// A style or variation is meaningless without something to attach it
+		// to. If the planner named a block that isn't registered here, its
+		// premise was wrong, so fall back rather than retargeting it to some
+		// arbitrary other block the author never asked about.
+		$target = $this->sanitize_target_block_param( (string) ( $parsed['target_block'] ?? '' ) );
+		if ( AI_Block_Store::KIND_CUSTOM_BLOCK !== $kind && '' === $target ) {
+			return $fallback;
+		}
+
+		return array(
+			'kind'         => $kind,
+			'target_block' => $target,
+			'rationale'    => sanitize_text_field( (string) ( $parsed['rationale'] ?? '' ) ),
+			'source'       => 'planner',
+		);
+	}
+
+	/**
+	 * Validates a caller-supplied target block name against what this site
+	 * actually has registered.
+	 *
+	 * @param string $target_block Raw block name.
+	 * @return string Valid block name, or '' when it isn't one.
+	 */
+	private function sanitize_target_block_param( string $target_block ): string {
+		$target_block = strtolower( trim( $target_block ) );
+
+		return in_array( $target_block, $this->candidate_target_blocks(), true ) ? $target_block : '';
+	}
+
+	/**
+	 * The blocks a style or variation may target.
+	 *
+	 * Deliberately a curated list rather than the whole registry: a site with
+	 * a dozen plugins can have hundreds of registered blocks, which is both too
+	 * many to put in a prompt and mostly noise (nobody wants an AI-authored
+	 * style on a third-party form-field block). The list is intersected with
+	 * the registry so a block the site doesn't have is never offered, and is
+	 * filterable for sites that do want to opt more blocks in.
+	 *
+	 * @return string[]
+	 */
+	private function candidate_target_blocks(): array {
+		$candidates = array(
+			'core/paragraph',
+			'core/heading',
+			'core/list',
+			'core/quote',
+			'core/pullquote',
+			'core/image',
+			'core/gallery',
+			'core/cover',
+			'core/media-text',
+			'core/group',
+			'core/columns',
+			'core/column',
+			'core/buttons',
+			'core/button',
+			'core/separator',
+			'core/table',
+			'core/code',
+			'core/details',
+			'core/embed',
+			'core/video',
+			'core/post-title',
+			'core/post-excerpt',
+			'core/post-featured-image',
+		);
+
+		$registered = AI_Block_Store::registered_block_names();
+		if ( ! empty( $registered ) ) {
+			$candidates = array_values( array_intersect( $candidates, $registered ) );
+		}
+
+		/**
+		 * Filters the blocks an AI-authored style or variation may target.
+		 *
+		 * @param string[] $candidates Block names, e.g. `core/quote`.
+		 */
+		return (array) apply_filters( 'ai_block_creator_target_block_candidates', $candidates );
+	}
+
+	/**
+	 * Trims and length-caps an incoming prompt.
+	 *
+	 * @param string $prompt Raw prompt.
+	 * @return string
+	 */
+	private function normalize_prompt( string $prompt ): string {
+		$prompt = trim( (string) wp_check_invalid_utf8( $prompt ) );
+
+		return mb_strlen( $prompt ) > 4000 ? mb_substr( $prompt, 0, 4000 ) : $prompt;
+	}
+
+	/**
+	 * Checks that an AI client is present, and that it can accept an image if
+	 * one was supplied.
+	 *
+	 * @param mixed $image Raw image param.
+	 * @return true|WP_Error
+	 */
+	private function check_ai_availability( $image ) {
 		if ( ! function_exists( 'wp_ai_client_prompt' ) ) {
 			return new WP_Error( 'no_ai_client', __( 'WordPress AI Client is not available in this environment.', 'ai-block-creator' ), array( 'status' => 500 ) );
 		}
@@ -193,18 +510,22 @@ class AI_Block_REST_Controller extends WP_REST_Controller {
 			return new WP_Error( 'image_input_not_supported', __( 'The configured AI provider does not support image inputs.', 'ai-block-creator' ), array( 'status' => 400 ) );
 		}
 
-		$validated_image = $this->validate_image_data_uri( $image );
-		if ( is_wp_error( $validated_image ) ) {
-			return $validated_image;
-		}
+		return true;
+	}
 
-		$system_instructions = $this->build_system_prompt();
-
-		$user_content = "User Request:\n" . $prompt;
-		if ( ! empty( $current_block ) ) {
-			$user_content .= "\n\nCurrent Block Definition to Refine/Update:\n" . wp_json_encode( $current_block, JSON_PRETTY_PRINT );
-		}
-
+	/**
+	 * Runs one JSON-returning model call.
+	 *
+	 * Shared by both stages so the timeout handling, ModelConfig options, and
+	 * JSON extraction can't drift apart between them.
+	 *
+	 * @param string                                      $system_instructions System prompt.
+	 * @param string                                      $user_content        User message.
+	 * @param array{data: string, mime_type: string}|null $image              Validated image, if any.
+	 * @param array<int, mixed>                           $history             Conversation history.
+	 * @return array<string, mixed>|WP_Error
+	 */
+	private function request_json_from_model( string $system_instructions, string $user_content, ?array $image, array $history ) {
 		$timeout          = (float) apply_filters( 'ai_block_creator_request_timeout', 300.0 );
 		$timeout_callback = static fn() => $timeout;
 		add_filter( 'wp_ai_client_default_request_timeout', $timeout_callback, 999 );
@@ -233,13 +554,13 @@ class AI_Block_REST_Controller extends WP_REST_Controller {
 			$builder = $builder->using_model_config( $model_config );
 			$builder = $builder->as_json_response();
 
-			$history_messages = $this->build_history_messages( is_array( $history ) ? $history : array() );
+			$history_messages = $this->build_history_messages( $history );
 			if ( ! empty( $history_messages ) ) {
 				$builder = $builder->with_history( ...$history_messages );
 			}
 
-			if ( is_array( $validated_image ) ) {
-				$builder = $builder->with_file( $validated_image['data'], $validated_image['mime_type'] );
+			if ( is_array( $image ) ) {
+				$builder = $builder->with_file( $image['data'], $image['mime_type'] );
 			}
 
 			$builder = $builder->with_text( $user_content );
@@ -266,7 +587,7 @@ class AI_Block_REST_Controller extends WP_REST_Controller {
 			if ( ! $parsed_json ) {
 				return new WP_Error(
 					'invalid_ai_response',
-					__( 'AI model did not return a valid block JSON structure.', 'ai-block-creator' ),
+					__( 'AI model did not return a valid JSON structure.', 'ai-block-creator' ),
 					array(
 						'status'       => 502,
 						'raw_response' => substr( (string) $raw_text, 0, 2000 ),
@@ -274,21 +595,7 @@ class AI_Block_REST_Controller extends WP_REST_Controller {
 				);
 			}
 
-			// Preserve the incoming name/slug when refining, so a follow-up
-			// turn doesn't accidentally rename (and thereby fork) the block.
-			if ( ! empty( $current_block['name'] ) && empty( $parsed_json['name'] ) ) {
-				$parsed_json['name'] = $current_block['name'];
-			}
-
-			$normalized_block = AI_Block_Store::normalize_and_validate( $parsed_json, $prompt );
-
-			return new WP_REST_Response(
-				array(
-					'success' => true,
-					'block'   => $normalized_block,
-				),
-				200
-			);
+			return $parsed_json;
 		} catch ( \Throwable $e ) {
 			return new WP_Error( 'generation_failed', $e->getMessage(), array( 'status' => 500 ) );
 		} finally {
@@ -403,11 +710,166 @@ class AI_Block_REST_Controller extends WP_REST_Controller {
 	}
 
 	/**
-	 * System prompt instructions for Gutenberg block generation.
+	 * Stage-one system prompt: classify the request, generate nothing.
+	 *
+	 * Kept deliberately small. This call runs on every un-planned request, so
+	 * it should be cheap and fast; all it has to produce is a routing decision
+	 * that stage two then builds against.
 	 *
 	 * @return string
 	 */
-	private function build_system_prompt(): string {
+	private function build_planner_system_prompt(): string {
+		$targets = implode( ', ', $this->candidate_target_blocks() );
+
+		$instructions = <<<'PROMPT'
+You are a WordPress Gutenberg architect. You do NOT write any block code in this step.
+Your only job is to decide WHICH OF THREE THINGS the user's request should become, and to say why.
+
+Output ONLY a valid JSON object (no markdown, no prose outside it):
+{
+  "kind": "custom_block" | "block_style" | "block_variation",
+  "target_block": "core/quote",   // REQUIRED for block_style and block_variation; use "" for custom_block
+  "rationale": "One short sentence, addressed to the site author, explaining the choice."
+}
+
+How to choose:
+
+1. "block_style" — the request is ONLY about how existing content LOOKS. The user already has (or would use)
+   an ordinary block, and wants a reusable visual treatment for it: a colour scheme, border, shadow, typography
+   tweak, background. It adds NO new editable fields and NO new markup. It becomes CSS attached to an
+   `.is-style-…` class the author toggles in that block's Styles panel.
+   Examples: "make pull quotes gold with a big serif quote mark", "give my buttons a neon glow on hover",
+   "a torn-paper edge treatment for image blocks".
+
+2. "block_variation" — the request is a PRESET of a block that already does the job structurally. The user wants
+   a named starting point with particular settings and/or a particular arrangement of inner blocks, but every
+   piece of it is something the target block can already express.
+   Examples: "a two-column feature layout with the image on the left", "a full-bleed dark cover with centred text",
+   "a set of three outlined buttons".
+
+3. "custom_block" — the request needs its OWN structure and its OWN editable fields that no single core block
+   provides, and the author should be able to fill it in from the block sidebar.
+   Examples: "a 3-tier pricing table with feature checklists", "a testimonial card with a star rating",
+   "a stats banner with four metrics".
+
+Rules:
+- "target_block" MUST be one of the allowed blocks listed below, exactly as written. If the best target for a
+  style or variation is not in that list, choose "custom_block" instead.
+- Prefer "block_style" or "block_variation" when they genuinely fit: they reuse a block the author already knows,
+  and appear directly in the editor where they'd expect them.
+- But when the request needs fields to fill in, repeated structured items, or markup no listed block produces,
+  choose "custom_block". If you are torn, choose "custom_block" — it can always express the request.
+- The rationale is shown to the author verbatim. Make it a plain, specific sentence, not a restatement of these rules.
+PROMPT;
+
+		return $instructions . "\n\nAllowed target_block values on this site: " . $targets . "\n";
+	}
+
+	/**
+	 * Stage-two system prompt for the planned kind.
+	 *
+	 * @param string $kind         One of AI_Block_Store's KIND_* values.
+	 * @param string $target_block Target block name for styles/variations.
+	 * @return string
+	 */
+	private function build_system_prompt( string $kind = AI_Block_Store::KIND_CUSTOM_BLOCK, string $target_block = '' ): string {
+		switch ( $kind ) {
+			case AI_Block_Store::KIND_BLOCK_STYLE:
+				return $this->build_block_style_prompt( $target_block );
+			case AI_Block_Store::KIND_BLOCK_VARIATION:
+				return $this->build_block_variation_prompt( $target_block );
+			default:
+				return $this->build_custom_block_prompt();
+		}
+	}
+
+	/**
+	 * Stage-two system prompt for a block style.
+	 *
+	 * @param string $target_block Target block name.
+	 * @return string
+	 */
+	private function build_block_style_prompt( string $target_block ): string {
+		$instructions = <<<'PROMPT'
+You are an expert WordPress theme designer writing a single block style.
+
+A block style is CSS ONLY. WordPress adds one class to the target block, and your CSS styles what is already
+there. You are NOT creating a block: there is no markup, no attributes, no editable fields, no JavaScript.
+
+You MUST output ONLY a valid JSON object (no markdown, no chatter outside the JSON):
+{
+  "name": "ai-gold-pullquote",     // lowercase, dashes only. It becomes the class `.is-style-{name}`.
+  "label": "Gold Pull-Quote",      // Short human label shown in the block's Styles panel.
+  "description": "One sentence describing the look.",
+  "css": "…"
+}
+
+Rules for "css":
+1. EVERY selector MUST be scoped to `.is-style-{name}` — the exact class formed from the "name" you chose.
+   Write `.is-style-ai-gold-pullquote { … }` and `.is-style-ai-gold-pullquote cite { … }`, never a bare
+   `blockquote { … }` or `cite { … }`, which would restyle every such element on the site.
+2. Style only what the target block actually renders. Do not invent elements or classes it does not output.
+3. No JavaScript, ever — no `<script>`, no event handlers. For interactivity use `:hover`, `:focus`,
+   `:focus-within`, and CSS transitions only.
+4. No external resources: no `@import`, no remote fonts, images, or icons (`https://…` or `//…`). Use CSS
+   gradients, borders, shapes, and system font stacks instead.
+5. Work in both light and dark themes, and keep text contrast accessible. Never convey meaning through colour alone.
+6. Respect `prefers-reduced-motion` if you animate anything.
+7. If refining an existing style, keep the same "name" and change only what was asked.
+PROMPT;
+
+		return $instructions . "\n\nThe style you are writing targets this block: " . $target_block . "\n";
+	}
+
+	/**
+	 * Stage-two system prompt for a block variation.
+	 *
+	 * @param string $target_block Target block name.
+	 * @return string
+	 */
+	private function build_block_variation_prompt( string $target_block ): string {
+		$instructions = <<<'PROMPT'
+You are an expert WordPress Gutenberg engineer writing a single block variation.
+
+A block variation is a NAMED PRESET of an existing block: a set of starting attribute values, optionally with a
+flat list of inner blocks to scaffold. You are NOT creating a block and NOT writing markup: the target block
+renders itself exactly as it always does, starting from the values you choose.
+
+You MUST output ONLY a valid JSON object (no markdown, no chatter outside the JSON):
+{
+  "name": "ai-two-col-feature",
+  "title": "Two Column Feature",       // Shown in the block inserter.
+  "description": "One sentence describing when to use it.",
+  "icon": "columns",                   // Dashicon slug.
+  "attributes": {                      // CONCRETE VALUES for the target block's own attributes — not a schema.
+    "className": "is-style-default",   // Do NOT write { "type": …, "default": … } here.
+    "align": "wide"
+  },
+  "inner_block_names": [ "core/column", "core/column" ],  // Optional, flat, max 10, core blocks only.
+  "css": ""                            // Optional. Usually empty — see rule 4.
+}
+
+Rules:
+1. "attributes" must only use attributes the target block genuinely supports, with values of the right type
+   (strings, numbers, booleans). Do not guess at attribute names; if unsure, leave it out.
+2. "inner_block_names" is a FLAT list of block names to insert inside the target, in order. There is no nesting
+   and no per-inner-block attributes. Omit it entirely for blocks that take no inner blocks.
+3. No JavaScript, ever.
+4. Prefer expressing the design through the target block's own attributes. Only supply "css" when the variation
+   genuinely needs styling that attributes cannot express, and if you do, scope every selector to a distinctive
+   class you also set via the "className" attribute. Never write unscoped element selectors.
+5. If refining an existing variation, keep the same "name" and change only what was asked.
+PROMPT;
+
+		return $instructions . "\n\nThe variation you are writing targets this block: " . $target_block . "\n";
+	}
+
+	/**
+	 * Stage-two system prompt for a brand-new custom block.
+	 *
+	 * @return string
+	 */
+	private function build_custom_block_prompt(): string {
 		return <<<'PROMPT'
 You are an expert WordPress Gutenberg Block engineer and modern UI designer.
 Your task is to create a complete, beautifully designed, highly functional WordPress Custom Block definition in JSON format based on the user's prompt or screenshot.
