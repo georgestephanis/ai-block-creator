@@ -123,6 +123,140 @@ final class DefinitionKindsTest extends TestCase
         $this->assertStringContainsString('color:red', $normalized['css']);
     }
 
+    public function test_correctly_scoped_style_css_is_left_exactly_as_written(): void
+    {
+        // The common case. A well-behaved response must pass through
+        // untouched: rewriting CSS that was already correct is both pointless
+        // and a way to introduce bugs into it.
+        $css = '.is-style-ai-x { color: gold; } .is-style-ai-x cite { font-style: normal; }';
+
+        $normalized = AI_Block_Store::normalize_and_validate(array(
+            'kind'         => 'block_style',
+            'name'         => 'x',
+            'target_block' => 'core/quote',
+            'css'          => $css,
+        ));
+
+        $this->assertSame($css, $normalized['css']);
+    }
+
+    /**
+     * @dataProvider provide_unscoped_css
+     *
+     * @param string   $css      CSS as the model wrote it.
+     * @param string[] $expected Fragments the scoped output must contain.
+     */
+    public function test_unscoped_style_css_is_confined_to_the_style_class(string $css, array $expected): void
+    {
+        // A style is registered site-wide, so one unscoped `blockquote { … }`
+        // restyles every quote on the site. The prompt asks for scoping; this
+        // is what enforces it.
+        $normalized = AI_Block_Store::normalize_and_validate(array(
+            'kind'         => 'block_style',
+            'name'         => 'x',
+            'target_block' => 'core/quote',
+            'css'          => $css,
+        ));
+
+        foreach ($expected as $fragment) {
+            $this->assertStringContainsString($fragment, $normalized['css']);
+        }
+    }
+
+    /**
+     * @return array<string, array{0: string, 1: string[]}>
+     */
+    public static function provide_unscoped_css(): array
+    {
+        return array(
+            // A bare type selector is ambiguous: it may mean the block's own
+            // root element, or a descendant of it. Both forms are emitted.
+            'bare element gets both forms' => array(
+                'blockquote { color: gold; }',
+                array('.is-style-ai-x blockquote', '.is-style-ai-x:is(blockquote)'),
+            ),
+            // A compound selector cannot describe a single element, so only
+            // the descendant form makes sense.
+            'compound selector is descendant only' => array(
+                'cite em { color: red; }',
+                array('.is-style-ai-x cite em'),
+            ),
+            'every selector in a list' => array(
+                'blockquote, cite { color: gold; }',
+                array('.is-style-ai-x blockquote', '.is-style-ai-x cite'),
+            ),
+            'inside a media query' => array(
+                '@media (min-width: 600px) { blockquote { padding: 2rem; } }',
+                array('@media (min-width: 600px)', '.is-style-ai-x blockquote'),
+            ),
+            // :root/html/body can never appear inside a block, so scoping them
+            // the usual way would silently delete them. They map onto the
+            // block root instead, which preserves custom properties the rest
+            // of the style may depend on.
+            'document root maps to the block root' => array(
+                ':root { --ai-x: gold; }',
+                array('.is-style-ai-x { --ai-x: gold; }'),
+            ),
+            // A browser closes a trailing unclosed block itself and applies
+            // the rule, so malformed CSS must still be scoped.
+            'unbalanced braces still get scoped' => array(
+                'blockquote { color: gold;',
+                array('.is-style-ai-x blockquote'),
+            ),
+        );
+    }
+
+    /**
+     * @dataProvider provide_css_the_scoper_must_not_break
+     *
+     * @param string $css      CSS input.
+     * @param string $fragment Fragment that must survive verbatim.
+     */
+    public function test_scoping_does_not_corrupt_tricky_css(string $css, string $fragment): void
+    {
+        $normalized = AI_Block_Store::normalize_and_validate(array(
+            'kind'         => 'block_style',
+            'name'         => 'x',
+            'target_block' => 'core/quote',
+            'css'          => $css,
+        ));
+
+        $this->assertStringContainsString($fragment, $normalized['css']);
+    }
+
+    /**
+     * @return array<string, array{0: string, 1: string}>
+     */
+    public static function provide_css_the_scoper_must_not_break(): array
+    {
+        return array(
+            // @keyframes contains keyframe selectors (from/to/percentages),
+            // not selectors; scoping them would corrupt the animation.
+            'keyframe bodies are left alone' => array(
+                '@keyframes ai-fade { from { opacity: 0; } to { opacity: 1; } }',
+                '@keyframes ai-fade { from { opacity: 0; } to { opacity: 1; } }',
+            ),
+            'commas inside :is() are not split on' => array(
+                ':is(h1, h2) { margin: 0; }',
+                ':is(h1, h2)',
+            ),
+            'commas inside attribute values are not split on' => array(
+                '[data-x="a,b"] { color: red; }',
+                '[data-x="a,b"]',
+            ),
+            // A comment containing a comma would otherwise be split across two
+            // selectors and mangle both.
+            'a comment containing a comma' => array(
+                '/* h1, h2 */ blockquote { color: gold; }',
+                '.is-style-ai-x blockquote',
+            ),
+            'a brace inside a comment is not a block' => array(
+                '/* } */ blockquote { color: gold; }',
+                '.is-style-ai-x blockquote',
+            ),
+        );
+    }
+
     /**
      * @dataProvider provide_invalid_target_blocks
      */
@@ -187,6 +321,41 @@ final class DefinitionKindsTest extends TestCase
         $this->assertArrayNotHasKey('notARealAttribute', $normalized['attributes']);
 
         $this->assertSame(array('core/column', 'core/column'), $normalized['inner_block_names']);
+    }
+
+    public function test_variation_css_is_confined_to_a_minted_class(): void
+    {
+        // A variation's stylesheet is enqueued for the whole target block type,
+        // so an unscoped selector would restyle every instance of that block --
+        // not just the ones using this variation.
+        $normalized = AI_Block_Store::normalize_and_validate(array(
+            'kind'         => 'block_variation',
+            'name'         => 'feature',
+            'target_block' => 'core/columns',
+            'attributes'   => array('align' => 'wide', 'className' => 'has-shadow'),
+            'css'          => '.wp-block-column { padding: 2rem; }',
+        ));
+
+        // The class the CSS is scoped to is preset on the variation, and any
+        // class the model already asked for is kept alongside it.
+        $this->assertStringContainsString('has-shadow', $normalized['attributes']['className']);
+        $this->assertStringContainsString('ai-variation-ai-feature', $normalized['attributes']['className']);
+        $this->assertStringContainsString('.ai-variation-ai-feature .wp-block-column', $normalized['css']);
+        $this->assertStringNotContainsString('.wp-block-column {', $normalized['css']);
+    }
+
+    public function test_a_variation_without_css_gains_no_marker_class(): void
+    {
+        // Most variations are pure attribute presets. They should not pick up
+        // a stray class for a stylesheet that doesn't exist.
+        $normalized = AI_Block_Store::normalize_and_validate(array(
+            'kind'         => 'block_variation',
+            'name'         => 'nocss',
+            'target_block' => 'core/columns',
+            'attributes'   => array('align' => 'wide'),
+        ));
+
+        $this->assertArrayNotHasKey('className', $normalized['attributes']);
     }
 
     public function test_variation_attributes_survive_when_the_target_block_is_unknown(): void

@@ -126,6 +126,13 @@ class AI_Block_Store {
 	private const MAX_ATTRIBUTE_DEPTH = 8;
 
 	/**
+	 * Maximum at-rule nesting recursed into when scoping a style's CSS.
+	 *
+	 * @var int
+	 */
+	private const MAX_AT_RULE_DEPTH = 5;
+
+	/**
 	 * Cache group for in-request/object-cache memoization.
 	 *
 	 * @var string
@@ -425,7 +432,10 @@ class AI_Block_Store {
 			'title'        => $label,
 			'description'  => sanitize_text_field( (string) ( $def['description'] ?? '' ) ),
 			'target_block' => self::sanitize_target_block( (string) ( $def['target_block'] ?? '' ) ),
-			'css'          => self::sanitize_css( is_string( $def['css'] ?? null ) ? $def['css'] : '' ),
+			'css'          => self::scope_css(
+				self::sanitize_css( is_string( $def['css'] ?? null ) ? $def['css'] : '' ),
+				'.is-style-' . $slug
+			),
 		);
 
 		if ( ! empty( $def['id'] ) ) {
@@ -458,6 +468,21 @@ class AI_Block_Store {
 
 		$target_block = self::sanitize_target_block( (string) ( $def['target_block'] ?? '' ) );
 
+		$attributes = self::sanitize_attribute_values( is_array( $def['attributes'] ?? null ) ? $def['attributes'] : array() );
+		$css        = self::sanitize_css( is_string( $def['css'] ?? null ) ? $def['css'] : '' );
+
+		// A variation's stylesheet is enqueued for the whole target block type
+		// — that is the block that will be on the page — so an unscoped
+		// selector in it restyles every instance of that block, not just the
+		// ones using this variation. Unlike a style, a variation has no class
+		// of its own to scope to, so one is minted here and preset on the
+		// variation, giving the CSS something real to be confined to.
+		if ( '' !== $css ) {
+			$marker     = 'ai-variation-' . $slug;
+			$attributes = self::ensure_class_name( $attributes, $marker );
+			$css        = self::scope_css( $css, '.' . $marker );
+		}
+
 		$normalized = array(
 			'kind'              => self::KIND_BLOCK_VARIATION,
 			'name'              => $slug,
@@ -465,12 +490,9 @@ class AI_Block_Store {
 			'description'       => sanitize_text_field( (string) ( $def['description'] ?? '' ) ),
 			'icon'              => self::sanitize_icon( (string) ( $def['icon'] ?? 'star-filled' ) ),
 			'target_block'      => $target_block,
-			'attributes'        => self::filter_to_block_attributes(
-				self::sanitize_attribute_values( is_array( $def['attributes'] ?? null ) ? $def['attributes'] : array() ),
-				$target_block
-			),
+			'attributes'        => self::filter_to_block_attributes( $attributes, $target_block ),
 			'inner_block_names' => self::sanitize_inner_block_names( is_array( $def['inner_block_names'] ?? null ) ? $def['inner_block_names'] : array() ),
-			'css'               => self::sanitize_css( is_string( $def['css'] ?? null ) ? $def['css'] : '' ),
+			'css'               => $css,
 		);
 
 		if ( ! empty( $def['id'] ) ) {
@@ -786,6 +808,266 @@ class AI_Block_Store {
 	}
 
 	/**
+	 * Confines every selector in a block style's CSS to that style's own class.
+	 *
+	 * The prompt already asks the model to scope its selectors, and a
+	 * well-behaved response passes through here untouched. But a style is
+	 * registered site-wide, so a single unscoped `blockquote { … }` restyles
+	 * every quote on the site — silently, and only for the pages an author
+	 * happens not to be looking at. Instruction is the wrong enforcement
+	 * mechanism for that; this is.
+	 *
+	 * Deliberately not a full CSS parser. It tracks braces, strings and
+	 * comments well enough to tell a selector list from a declaration block and
+	 * to recurse into conditional at-rules, and it leaves anything it does not
+	 * understand alone rather than guessing.
+	 *
+	 * @param string $css   Already-sanitized CSS.
+	 * @param string $scope Scope selector, e.g. `.is-style-ai-gold-pullquote`.
+	 * @param int    $depth Current at-rule nesting depth.
+	 * @return string CSS with every rule confined to $scope.
+	 */
+	private static function scope_css( string $css, string $scope, int $depth = 0 ): string {
+		if ( '' === trim( $css ) || $depth > self::MAX_AT_RULE_DEPTH ) {
+			return $css;
+		}
+
+		$out           = '';
+		$length        = strlen( $css );
+		$prelude_start = 0;
+		$i             = 0;
+
+		while ( $i < $length ) {
+			$char = $css[ $i ];
+
+			if ( '"' === $char || "'" === $char ) {
+				$i = self::skip_css_string( $css, $i );
+				continue;
+			}
+
+			if ( '/' === $char && $i + 1 < $length && '*' === $css[ $i + 1 ] ) {
+				$end = strpos( $css, '*/', $i + 2 );
+				$i   = ( false === $end ) ? $length : $end + 2;
+				continue;
+			}
+
+			// A semicolon at this level ends a statement with no block of its
+			// own (`@charset "utf-8";`). Emit it verbatim; there is no selector.
+			if ( ';' === $char ) {
+				$out .= substr( $css, $prelude_start, $i - $prelude_start + 1 );
+				++$i;
+				$prelude_start = $i;
+				continue;
+			}
+
+			if ( '{' !== $char ) {
+				++$i;
+				continue;
+			}
+
+			$prelude  = substr( $css, $prelude_start, $i - $prelude_start );
+			$body_end = self::find_matching_brace( $css, $i );
+
+			if ( null === $body_end ) {
+				// Unbalanced braces. Passing the remainder through verbatim
+				// would leak an unscoped rule, because a browser closes the
+				// final block for us and applies it anyway — so scope it and
+				// close it here instead.
+				return $out . self::scope_selector_list( $prelude, $scope ) . '{' . substr( $css, $i + 1 ) . '}';
+			}
+
+			$body    = substr( $css, $i + 1, $body_end - $i - 1 );
+			$trimmed = ltrim( $prelude );
+
+			if ( '' !== $trimmed && '@' === $trimmed[0] ) {
+				// Conditional groups wrap ordinary rules, so their contents
+				// still need scoping. Everything else that takes a block
+				// (@keyframes, @font-face, @property, @page…) contains
+				// keyframe selectors or descriptors, not selectors — scoping
+				// those would corrupt them.
+				$body = preg_match( '/^@(media|supports|container|layer|scope)\b/i', $trimmed )
+					? self::scope_css( $body, $scope, $depth + 1 )
+					: $body;
+
+				$out .= $prelude . '{' . $body . '}';
+			} else {
+				$out .= self::scope_selector_list( $prelude, $scope ) . '{' . $body . '}';
+			}
+
+			$i             = $body_end + 1;
+			$prelude_start = $i;
+		}
+
+		return $out . substr( $css, $prelude_start );
+	}
+
+	/**
+	 * Prefixes each selector in a comma-separated list with the scope.
+	 *
+	 * A selector that already mentions the scope class is left exactly as
+	 * written — that is the well-formed case, and rewriting it would be both
+	 * pointless and a way to introduce bugs into CSS that was already correct.
+	 *
+	 * @param string $selector_list Raw selector list (may carry leading whitespace).
+	 * @param string $scope         Scope selector.
+	 * @return string
+	 */
+	private static function scope_selector_list( string $selector_list, string $scope ): string {
+		// Preserve the original leading whitespace so the output keeps the
+		// input's formatting rather than collapsing onto one line.
+		$leading = '';
+		if ( preg_match( '/^\s+/', $selector_list, $match ) ) {
+			$leading = $match[0];
+		}
+
+		// Comments are dropped before splitting: they mean nothing in a
+		// selector, and one containing a comma ("/* h1, h2 */") would otherwise
+		// be split across two selectors and mangle both.
+		$without_comments = (string) preg_replace( '#/\*.*?\*/#s', '', trim( $selector_list ) );
+
+		$scoped = array();
+		foreach ( self::split_selector_list( $without_comments ) as $selector ) {
+			$selector = trim( $selector );
+			if ( '' === $selector ) {
+				continue;
+			}
+
+			if ( false !== strpos( $selector, $scope ) ) {
+				$scoped[] = $selector;
+				continue;
+			}
+
+			// `:root`, `html` and `body` can never appear inside a block, so
+			// scoping them the usual way would produce a selector that matches
+			// nothing — quietly deleting, say, the custom properties the rest
+			// of the style depends on. Map them onto the block's own root
+			// instead, which both preserves the intent and contains it.
+			if ( preg_match( '/^(:root|html|body)$/i', $selector ) ) {
+				$scoped[] = $scope;
+				continue;
+			}
+
+			// Descendant form covers the usual case (`cite` meaning "the cite
+			// inside this block").
+			$scoped[] = $scope . ' ' . $selector;
+
+			// A *simple* selector may also have been meant as the block's own
+			// root element (`blockquote` on a Quote block), which the
+			// descendant form would never match. Compound selectors are not
+			// given this treatment: `cite em` cannot describe a single element.
+			if ( ! preg_match( '/[\s>+~]/', $selector ) ) {
+				$scoped[] = $scope . ':is(' . $selector . ')';
+			}
+		}
+
+		return empty( $scoped ) ? $selector_list : $leading . implode( ', ', $scoped ) . ' ';
+	}
+
+	/**
+	 * Splits a selector list on top-level commas only, so commas inside
+	 * `:is(a, b)`, `[attr="a,b"]` and the like stay put.
+	 *
+	 * @param string $selector_list Selector list.
+	 * @return string[]
+	 */
+	private static function split_selector_list( string $selector_list ): array {
+		$parts  = array();
+		$buffer = '';
+		$depth  = 0;
+		$length = strlen( $selector_list );
+
+		for ( $i = 0; $i < $length; $i++ ) {
+			$char = $selector_list[ $i ];
+
+			if ( '"' === $char || "'" === $char ) {
+				$end     = self::skip_css_string( $selector_list, $i );
+				$buffer .= substr( $selector_list, $i, $end - $i );
+				$i       = $end - 1;
+				continue;
+			}
+
+			if ( '(' === $char || '[' === $char ) {
+				++$depth;
+			} elseif ( ')' === $char || ']' === $char ) {
+				$depth = max( 0, $depth - 1 );
+			} elseif ( ',' === $char && 0 === $depth ) {
+				$parts[] = $buffer;
+				$buffer  = '';
+				continue;
+			}
+
+			$buffer .= $char;
+		}
+
+		$parts[] = $buffer;
+
+		return $parts;
+	}
+
+	/**
+	 * Returns the offset of the `}` matching the `{` at $open, or null when the
+	 * CSS is unbalanced.
+	 *
+	 * @param string $css  CSS being scanned.
+	 * @param int    $open Offset of the opening brace.
+	 * @return int|null
+	 */
+	private static function find_matching_brace( string $css, int $open ): ?int {
+		$depth  = 0;
+		$length = strlen( $css );
+
+		for ( $i = $open; $i < $length; $i++ ) {
+			$char = $css[ $i ];
+
+			if ( '"' === $char || "'" === $char ) {
+				$i = self::skip_css_string( $css, $i ) - 1;
+				continue;
+			}
+
+			if ( '/' === $char && $i + 1 < $length && '*' === $css[ $i + 1 ] ) {
+				$end = strpos( $css, '*/', $i + 2 );
+				$i   = ( false === $end ) ? $length : $end + 1;
+				continue;
+			}
+
+			if ( '{' === $char ) {
+				++$depth;
+			} elseif ( '}' === $char ) {
+				--$depth;
+				if ( 0 === $depth ) {
+					return $i;
+				}
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Returns the offset just past the string literal starting at $start.
+	 *
+	 * @param string $css   CSS being scanned.
+	 * @param int    $start Offset of the opening quote.
+	 * @return int
+	 */
+	private static function skip_css_string( string $css, int $start ): int {
+		$quote  = $css[ $start ];
+		$length = strlen( $css );
+
+		for ( $i = $start + 1; $i < $length; $i++ ) {
+			if ( '\\' === $css[ $i ] ) {
+				++$i;
+				continue;
+			}
+			if ( $css[ $i ] === $quote ) {
+				return $i + 1;
+			}
+		}
+
+		return $length;
+	}
+
+	/**
 	 * Returns a registered block's own attribute schema — which is exactly what
 	 * its `block.json` declares — or an empty array when the block isn't
 	 * registered (or has no attributes).
@@ -846,6 +1128,42 @@ class AI_Block_Store {
 		}
 
 		return $clean;
+	}
+
+	/**
+	 * Adds a class to an attribute set's `className`, preserving any already there.
+	 *
+	 * If the target block turns out not to support `className`,
+	 * filter_to_block_attributes() drops it afterwards and the scoped CSS
+	 * simply matches nothing. That is the intended degradation: CSS that is
+	 * inert is better than CSS that leaks onto every instance of the block.
+	 *
+	 * @param array<string, mixed> $attributes Attribute values.
+	 * @param string               $class_name Class to ensure is present.
+	 * @return array<string, mixed>
+	 */
+	private static function ensure_class_name( array $attributes, string $class_name ): array {
+		$existing = isset( $attributes['className'] ) && is_string( $attributes['className'] )
+			? trim( $attributes['className'] )
+			: '';
+
+		if ( '' === $existing ) {
+			$attributes['className'] = $class_name;
+			return $attributes;
+		}
+
+		$classes = preg_split( '/\s+/', $existing );
+		if ( ! is_array( $classes ) ) {
+			$classes = array();
+		}
+
+		if ( ! in_array( $class_name, $classes, true ) ) {
+			$classes[] = $class_name;
+		}
+
+		$attributes['className'] = implode( ' ', $classes );
+
+		return $attributes;
 	}
 
 	/**

@@ -129,6 +129,21 @@ this code:
   class written into post content, so refinement turns pin the stored name instead
   of letting the model rename it. (Custom blocks still allow a rename on refinement
   — a pre-existing behavior this didn't change.)
+- **Style and variation CSS is scoped structurally, not by asking nicely.** Both are
+  registered site-wide — a style's CSS loads wherever its target block appears, and
+  a variation's is enqueued for the entire target block *type* — so one unscoped
+  `blockquote { … }` restyles every quote on the site. `scope_css()` confines every
+  selector: to `.is-style-{name}` for a style, and for a variation to a minted
+  `ai-variation-{name}` class that is simultaneously preset on the variation so
+  there is something real to scope to. Correct CSS passes through byte-identical
+  (verified against live model output), so the scoper only ever fires on the
+  failure case. Things it must keep getting right, all covered by tests: leave
+  `@keyframes` bodies alone (their contents are keyframe selectors, not selectors),
+  recurse into `@media`/`@supports`/`@container`, don't split on commas inside
+  `:is()`/attribute values/comments, map `:root`/`html`/`body` onto the block root
+  rather than emitting a selector that can never match, and scope a trailing
+  unclosed rule rather than passing it through (a browser closes it and applies it
+  anyway).
 - **Kinds share one post type and are namespaced in `post_name`** (`{slug}`,
   `style-{slug}`, `variation-{slug}`, `pattern-{slug}`) so a style can't overwrite
   the custom block that happens to share its slug. Custom blocks keep their bare

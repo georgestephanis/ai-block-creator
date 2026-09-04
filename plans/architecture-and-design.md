@@ -246,10 +246,32 @@ involved, so there is no template for a caller to smuggle markup through.
 }
 ```
 
-Every selector in `css` must be scoped to `.is-style-{name}`. That's enforced by
-the prompt, not by a parser — unscoped selectors are a style-bleed bug, not a
-security one, and the same `sanitize_css()` pass that protects custom blocks
-(stripping `<script>`/`<style>`/`@import`/`expression()`/`javascript:`) applies here.
+Every selector in `css` is confined to `.is-style-{name}` by `scope_css()`, on top
+of the same `sanitize_css()` pass that protects custom blocks (stripping
+`<script>`/`<style>`/`@import`/`expression()`/`javascript:`).
+
+The prompt asks for scoped selectors and a well-behaved response passes through
+byte-identical — but a style is registered site-wide, so a single unscoped
+`blockquote { … }` restyles every quote on the site, silently, on pages the author
+isn't looking at. Instruction is the wrong enforcement mechanism for that.
+
+`scope_css()` is deliberately not a full CSS parser. It tracks braces, strings and
+comments well enough to tell a selector list from a declaration block, and leaves
+anything it doesn't understand alone. The behaviors that matter:
+
+- A bare type selector is ambiguous — `blockquote` may mean the block's own root
+  element or a descendant of it — so both forms are emitted
+  (`.is-style-x blockquote, .is-style-x:is(blockquote)`). A compound selector
+  can't describe a single element, so it only gets the descendant form.
+- `@keyframes` bodies are left alone: their contents are keyframe selectors
+  (`from`, `to`, `50%`), and scoping them would corrupt the animation.
+  `@media`/`@supports`/`@container`/`@layer` are recursed into.
+- Commas inside `:is(a, b)`, `[attr="a,b"]` and comments are not split on.
+- `:root`, `html` and `body` map onto the block root. Scoping them the usual way
+  would produce a selector that can never match, silently deleting (for instance)
+  the custom properties the rest of the style depends on.
+- A trailing unclosed rule is scoped and closed rather than passed through — a
+  browser closes it for us and applies it, so passing it through would leak.
 
 ### 4.3 `block_variation`
 
@@ -272,6 +294,11 @@ Note that a variation's `attributes` are concrete **values** to preset on the
 target block, not the `{ type, default }` **schema** a custom block declares.
 They go through `sanitize_attribute_values()`, not `sanitize_attributes()`;
 running the schema sanitizer over them would discard every one.
+
+A variation that carries CSS also gets an `ai-variation-{name}` class minted into
+its `className` preset, and its CSS scoped to that class — its stylesheet is
+enqueued for the entire target block *type*, so an unscoped selector would reach
+every instance of that block rather than only the ones using the variation.
 
 Those values nest further than a first glance suggests — core's own markup carries
 `style.spacing.padding.top` and `style.elements.link.color.text` — so

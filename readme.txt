@@ -73,6 +73,7 @@ Saved blocks are stored as a private custom post type. Deactivating the plugin d
 * Two-stage generation: requests are first classified as a custom block, a block style, a block variation, or a block pattern, then built accordingly — with the reasoning shown and overridable in the editor.
 * Requests now carry a JSON response schema, with a single automatic repair turn when a model returns the wrong shape anyway.
 * Block variations are validated against the target block's own registered attributes, so a variation can't be saved with settings that would silently do nothing.
+* Generated styles and variations have their CSS confined to their own class automatically, so an AI-authored style can't restyle the rest of your site.
 * Initial release: Conversational custom block creation, voice dictation, screenshot dropzone, live preview, dynamic block registration, and WordPress AI Client integration.
 * Security hardening: saving/deleting a block now requires the `unfiltered_html` capability, and both the block's markup and its CSS are validated/sanitized before they're stored.
 * Added the AI Block Library panel for managing previously saved blocks (insert, refine, delete).
