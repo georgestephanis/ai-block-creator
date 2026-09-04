@@ -1,5 +1,5 @@
 /**
- * Human-facing labels for the three kinds of thing this plugin can produce.
+ * Human-facing labels for the four kinds of thing this plugin can produce.
  *
  * Kept in one module so the modal, the preview, and the library sidebar all
  * describe a definition the same way.

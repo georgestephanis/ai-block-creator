@@ -30,7 +30,7 @@ ai-block-creator/
 │   │   ├── BlockPreview.js              # Interactive live preview & attribute tester
 │   │   ├── ImageDropzone.js             # Drag-and-drop & clipboard paste listener
 │   │   ├── DefinitionPreview.js         # Preview for styles/variations/patterns (no render template)
-│   │   ├── kind-labels.js               # Shared human labels for the three definition kinds
+│   │   ├── kind-labels.js               # Shared human labels for the four definition kinds
 │   │   └── VoiceInput.js                # Web Speech API voice dictation
 │   ├── runtime/
 │   │   ├── dynamic-block-factory.js     # Client-side dynamic wp.blocks.registerBlockType
