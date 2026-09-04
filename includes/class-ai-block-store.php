@@ -140,6 +140,13 @@ class AI_Block_Store {
 	private const CACHE_GROUP = 'ai_block_creator';
 
 	/**
+	 * Per-request memo for variations_by_target_block(), or null when unbuilt.
+	 *
+	 * @var array<string, array<int, array<string, mixed>>>|null
+	 */
+	private static $variations_by_target = null;
+
+	/**
 	 * Allowed attribute types (mirrors Gutenberg's attribute schema).
 	 *
 	 * @var string[]
@@ -1498,9 +1505,43 @@ class AI_Block_Store {
 	}
 
 	/**
+	 * Returns stored variations grouped by the block they target.
+	 *
+	 * The `get_block_type_variations` filter runs once per block type queried,
+	 * and building the editor's settings queries every registered block type —
+	 * so filtering the whole definition list inside the filter is O(block types
+	 * x definitions) per request for what is really one grouping. Memoized per
+	 * request rather than cached in the object cache, so it cannot outlive the
+	 * request that built it; flush_cache() resets it for the case where a write
+	 * lands before something asks for variations again.
+	 *
+	 * @return array<string, array<int, array<string, mixed>>> Target block name => definitions.
+	 */
+	public static function variations_by_target_block(): array {
+		if ( null !== self::$variations_by_target ) {
+			return self::$variations_by_target;
+		}
+
+		$grouped = array();
+		foreach ( self::by_kind( self::KIND_BLOCK_VARIATION ) as $def ) {
+			$target = $def['target_block'] ?? '';
+			if ( '' === $target || empty( $def['name'] ) ) {
+				continue;
+			}
+
+			$grouped[ $target ][] = $def;
+		}
+
+		self::$variations_by_target = $grouped;
+
+		return $grouped;
+	}
+
+	/**
 	 * Flushes the in-memory/object cache for definitions. Call after any write.
 	 */
 	public static function flush_cache(): void {
+		self::$variations_by_target = null;
 		wp_cache_delete( 'all_definitions', self::CACHE_GROUP );
 		// Per-slug entries are left to expire naturally (object cache) or are
 		// simply re-fetched (non-persistent cache); enumerating them here

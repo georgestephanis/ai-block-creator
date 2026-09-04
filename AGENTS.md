@@ -98,6 +98,13 @@ this code:
   blocks being varied are already registered by the time this plugin loads), and
   `register_block_pattern()` for patterns.
   `tests/php/KindRegistrationTest.php` guards each of those landings.
+- **`get_block_type_variations` fires once per block type queried**, and building
+  the editor's settings queries every registered one — so the filter looks up a
+  pre-grouped `target => variations` map (`AI_Block_Store::variations_by_target_block()`)
+  rather than re-filtering the whole definition list per call. That map is memoized
+  per request, which means it has an invalidation obligation: `flush_cache()` resets
+  it, and `KindRegistrationTest` asserts a variation saved *after* a lookup still
+  appears (that test fails if the reset is removed).
 - **A pattern's `content` cannot be string-filtered.** Block delimiters are HTML
   comments, which `wp_kses()` strips outright, so filtering the raw markup would
   destroy the pattern. `sanitize_pattern_content()` round-trips it through

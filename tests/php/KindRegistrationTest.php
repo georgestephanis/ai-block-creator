@@ -143,6 +143,32 @@ final class KindRegistrationTest extends TestCase
         );
     }
 
+    public function test_a_variation_saved_after_the_first_lookup_still_appears(): void
+    {
+        // variations_by_target_block() memoizes its grouping per request, so
+        // this is the invalidation guard: a variation saved after something
+        // already asked for variations must not be hidden behind a stale memo.
+        $block_type = WP_Block_Type_Registry::get_instance()->get_registered('core/columns');
+        $this->assertNotNull($block_type);
+
+        // Prime the memo.
+        $block_type->get_variations();
+
+        $variation = AI_Block_Store::save(array(
+            'kind'         => 'block_variation',
+            'name'         => 'saved-after-lookup',
+            'title'        => 'Saved After Lookup',
+            'target_block' => 'core/columns',
+        ));
+        $this->assertIsArray($variation);
+        $this->created_post_ids[] = $variation['id'];
+
+        $this->assertContains(
+            'ai-saved-after-lookup',
+            wp_list_pluck($block_type->get_variations(), 'name')
+        );
+    }
+
     public function test_a_variation_only_attaches_to_its_own_target_block(): void
     {
         $variation = AI_Block_Store::save(array(

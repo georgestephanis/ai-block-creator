@@ -50,10 +50,18 @@ final class ResponseSchemaTest extends TestCase
      */
     private function call(string $method, array $args = [])
     {
-        // No setAccessible() call: private methods have been reflection-
-        // invocable without it since PHP 8.1, and the method is deprecated in 8.5.
-        return (new ReflectionMethod(AI_Block_REST_Controller::class, $method))
-            ->invokeArgs($this->controller, $args);
+        $reflection = new ReflectionMethod(AI_Block_REST_Controller::class, $method);
+
+        // This plugin supports PHP 7.4, where a private method cannot be
+        // invoked via reflection without setAccessible(true) -- but 8.1 made
+        // that a no-op and 8.5 deprecates it, so calling it unconditionally
+        // raises a deprecation on modern runtimes. Version-gated to satisfy
+        // both ends of the supported range.
+        if (PHP_VERSION_ID < 80100) {
+            $reflection->setAccessible(true);
+        }
+
+        return $reflection->invokeArgs($this->controller, $args);
     }
 
     /**

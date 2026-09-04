@@ -228,11 +228,16 @@ add_action( 'init', __NAMESPACE__ . '\\register_ai_block_styles', 20 );
  * @return array<int, array<string, mixed>>
  */
 function filter_ai_block_variations( array $variations, \WP_Block_Type $block_type ): array {
-	foreach ( AI_Block_Store::by_kind( AI_Block_Store::KIND_BLOCK_VARIATION ) as $def ) {
-		if ( empty( $def['name'] ) || ( $def['target_block'] ?? '' ) !== $block_type->name ) {
-			continue;
-		}
+	// Indexed by target rather than scanned per call: this filter fires once
+	// per block type queried, and building the editor's settings queries every
+	// registered one.
+	$grouped = AI_Block_Store::variations_by_target_block();
 
+	if ( empty( $grouped[ $block_type->name ] ) ) {
+		return $variations;
+	}
+
+	foreach ( $grouped[ $block_type->name ] as $def ) {
 		$variation = array(
 			'name'        => $def['name'],
 			'title'       => $def['title'] ?? $def['name'],
