@@ -14,6 +14,7 @@ import {
 	KIND_CUSTOM_BLOCK,
 	KIND_BLOCK_STYLE,
 	KIND_BLOCK_VARIATION,
+	KIND_BLOCK_PATTERN,
 } from '../dynamic-block-factory';
 
 describe( 'kindOf', () => {
@@ -26,7 +27,9 @@ describe( 'kindOf', () => {
 	} );
 
 	it( 'treats an unrecognized kind as a custom block', () => {
-		expect( kindOf( { kind: 'block_pattern' } ) ).toBe( KIND_CUSTOM_BLOCK );
+		expect( kindOf( { kind: 'block_template' } ) ).toBe(
+			KIND_CUSTOM_BLOCK
+		);
 	} );
 
 	it( 'is undefined-safe', () => {
@@ -38,6 +41,9 @@ describe( 'kindOf', () => {
 		expect( kindOf( { kind: KIND_BLOCK_STYLE } ) ).toBe( KIND_BLOCK_STYLE );
 		expect( kindOf( { kind: KIND_BLOCK_VARIATION } ) ).toBe(
 			KIND_BLOCK_VARIATION
+		);
+		expect( kindOf( { kind: KIND_BLOCK_PATTERN } ) ).toBe(
+			KIND_BLOCK_PATTERN
 		);
 	} );
 } );

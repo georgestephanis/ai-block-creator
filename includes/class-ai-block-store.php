@@ -64,6 +64,25 @@ class AI_Block_Store {
 	public const KIND_BLOCK_VARIATION = 'block_variation';
 
 	/**
+	 * Definition kind: a block pattern — a ready-made arrangement of blocks
+	 * that already exist, registered via register_block_pattern(). Contributes
+	 * no new block, no style and no variation; inserting it drops ordinary
+	 * blocks into the post, which the author then edits normally.
+	 *
+	 * @var string
+	 */
+	public const KIND_BLOCK_PATTERN = 'block_pattern';
+
+	/**
+	 * Namespace every AI-authored pattern is registered under. Pattern names
+	 * are `namespace/slug`, but definitions store only the slug half (matching
+	 * every other kind), so the namespace is prepended at registration time.
+	 *
+	 * @var string
+	 */
+	public const PATTERN_NAMESPACE = 'ai-block-creator';
+
+	/**
 	 * Every recognized definition kind.
 	 *
 	 * @var string[]
@@ -72,7 +91,25 @@ class AI_Block_Store {
 		self::KIND_CUSTOM_BLOCK,
 		self::KIND_BLOCK_STYLE,
 		self::KIND_BLOCK_VARIATION,
+		self::KIND_BLOCK_PATTERN,
 	);
+
+	/**
+	 * Maximum stored length of a pattern's serialized block markup. Generous
+	 * for any plausible pattern, but bounded: this is model output landing in
+	 * post meta, so it should not be able to grow without limit.
+	 *
+	 * @var int
+	 */
+	private const MAX_PATTERN_CONTENT_BYTES = 100000;
+
+	/**
+	 * Maximum nesting depth walked when sanitizing a pattern's block tree.
+	 * Blocks nested deeper than this are dropped rather than recursed into.
+	 *
+	 * @var int
+	 */
+	private const MAX_PATTERN_DEPTH = 10;
 
 	/**
 	 * Cache group for in-request/object-cache memoization.
@@ -224,6 +261,8 @@ class AI_Block_Store {
 				return 'style-' . $name;
 			case self::KIND_BLOCK_VARIATION:
 				return 'variation-' . $name;
+			case self::KIND_BLOCK_PATTERN:
+				return 'pattern-' . $name;
 			default:
 				return str_replace( 'ai-block/', '', $name );
 		}
@@ -330,6 +369,8 @@ class AI_Block_Store {
 				return self::normalize_block_style( $def, $title_fallback );
 			case self::KIND_BLOCK_VARIATION:
 				return self::normalize_block_variation( $def, $title_fallback );
+			case self::KIND_BLOCK_PATTERN:
+				return self::normalize_block_pattern( $def, $title_fallback );
 			default:
 				return self::normalize_custom_block( $def, $title_fallback );
 		}
@@ -353,7 +394,7 @@ class AI_Block_Store {
 			? sanitize_text_field( $def['label'] )
 			: ( ! empty( $def['title'] ) && is_string( $def['title'] ) ? sanitize_text_field( $def['title'] ) : $title_fallback );
 
-		$slug = self::style_or_variation_slug( $def, $label, 'style' );
+		$slug = self::prefixed_slug( $def, $label, 'style' );
 
 		$normalized = array(
 			'kind'         => self::KIND_BLOCK_STYLE,
@@ -391,7 +432,9 @@ class AI_Block_Store {
 			? sanitize_text_field( $def['title'] )
 			: $title_fallback;
 
-		$slug = self::style_or_variation_slug( $def, $title, 'variation' );
+		$slug = self::prefixed_slug( $def, $title, 'variation' );
+
+		$target_block = self::sanitize_target_block( (string) ( $def['target_block'] ?? '' ) );
 
 		$normalized = array(
 			'kind'              => self::KIND_BLOCK_VARIATION,
@@ -399,8 +442,11 @@ class AI_Block_Store {
 			'title'             => $title,
 			'description'       => sanitize_text_field( (string) ( $def['description'] ?? '' ) ),
 			'icon'              => self::sanitize_icon( (string) ( $def['icon'] ?? 'star-filled' ) ),
-			'target_block'      => self::sanitize_target_block( (string) ( $def['target_block'] ?? '' ) ),
-			'attributes'        => self::sanitize_attribute_values( is_array( $def['attributes'] ?? null ) ? $def['attributes'] : array() ),
+			'target_block'      => $target_block,
+			'attributes'        => self::filter_to_block_attributes(
+				self::sanitize_attribute_values( is_array( $def['attributes'] ?? null ) ? $def['attributes'] : array() ),
+				$target_block
+			),
 			'inner_block_names' => self::sanitize_inner_block_names( is_array( $def['inner_block_names'] ?? null ) ? $def['inner_block_names'] : array() ),
 			'css'               => self::sanitize_css( is_string( $def['css'] ?? null ) ? $def['css'] : '' ),
 		);
@@ -413,19 +459,241 @@ class AI_Block_Store {
 	}
 
 	/**
-	 * Builds the slug (and registered name) for a style or variation.
+	 * Normalizes a block pattern definition.
 	 *
-	 * Both are namespaced with an `ai-` prefix so an AI-authored style is
-	 * visibly distinct from a theme's or core's own in the Styles panel, and
-	 * so the generated CSS class (`.is-style-ai-…`) can't collide with one
-	 * the target block already ships.
+	 * A pattern is serialized block markup: no new block type, no style, no
+	 * variation. Inserting it drops ordinary blocks into the post, which the
+	 * author then edits like any other content — which is also why `content`
+	 * is held to the same trust boundary as post content itself.
+	 *
+	 * @param array<string, mixed> $def            Raw definition.
+	 * @param string               $title_fallback Fallback title.
+	 * @return array<string, mixed>
+	 */
+	private static function normalize_block_pattern( array $def, string $title_fallback ): array {
+		$title = ! empty( $def['title'] ) && is_string( $def['title'] )
+			? sanitize_text_field( $def['title'] )
+			: $title_fallback;
+
+		$slug = self::prefixed_slug( $def, $title, 'pattern' );
+
+		$normalized = array(
+			'kind'           => self::KIND_BLOCK_PATTERN,
+			'name'           => $slug,
+			'title'          => $title,
+			'description'    => sanitize_text_field( (string) ( $def['description'] ?? '' ) ),
+			'keywords'       => self::sanitize_keywords( is_array( $def['keywords'] ?? null ) ? $def['keywords'] : array() ),
+			'viewport_width' => self::sanitize_viewport_width( $def['viewport_width'] ?? null ),
+			'content'        => self::sanitize_pattern_content( is_string( $def['content'] ?? null ) ? $def['content'] : '' ),
+		);
+
+		if ( ! empty( $def['id'] ) ) {
+			$normalized['id'] = (int) $def['id'];
+		}
+
+		return $normalized;
+	}
+
+	/**
+	 * Validates and re-serializes a pattern's block markup.
+	 *
+	 * The markup is round-tripped through parse_blocks() → validation →
+	 * serialize_blocks() rather than being string-filtered. That matters for
+	 * two reasons: block delimiters are HTML comments, which wp_kses() strips
+	 * outright (so filtering the raw markup would destroy it), and parsing is
+	 * what makes it possible to check the thing that actually needs checking —
+	 * that every block in the tree is one this site has registered. Anything
+	 * else is dropped, so a pattern can't smuggle in a reference to a block
+	 * type that doesn't exist (which renders as a broken-block warning) or
+	 * carry an unbounded nested payload.
+	 *
+	 * @param string $content Raw serialized block markup.
+	 * @return string Clean block markup.
+	 */
+	private static function sanitize_pattern_content( string $content ): string {
+		if ( '' === trim( $content ) ) {
+			return '';
+		}
+
+		if ( strlen( $content ) > self::MAX_PATTERN_CONTENT_BYTES ) {
+			$content = substr( $content, 0, self::MAX_PATTERN_CONTENT_BYTES );
+		}
+
+		$blocks = self::sanitize_block_list( parse_blocks( $content ), 0 );
+
+		return trim( serialize_blocks( $blocks ) );
+	}
+
+	/**
+	 * Sanitizes a list of parsed blocks, dropping any that don't survive.
+	 *
+	 * @param array<int, array<string, mixed>> $blocks Parsed blocks.
+	 * @param int                              $depth  Current nesting depth.
+	 * @return array<int, array<string, mixed>>
+	 */
+	private static function sanitize_block_list( array $blocks, int $depth ): array {
+		if ( $depth > self::MAX_PATTERN_DEPTH ) {
+			return array();
+		}
+
+		$clean = array();
+		foreach ( $blocks as $block ) {
+			if ( ! is_array( $block ) ) {
+				continue;
+			}
+
+			$sanitized = self::sanitize_block_node( $block, $depth );
+			if ( null !== $sanitized ) {
+				$clean[] = $sanitized;
+			}
+		}
+
+		return $clean;
+	}
+
+	/**
+	 * Sanitizes one parsed block node.
+	 *
+	 * @param array<string, mixed> $block Parsed block.
+	 * @param int                  $depth Current nesting depth.
+	 * @return array<string, mixed>|null The clean node, or null if it should be dropped.
+	 */
+	private static function sanitize_block_node( array $block, int $depth ): ?array {
+		$block_name = $block['blockName'] ?? null;
+
+		// A null blockName is the parser's representation of loose HTML
+		// between blocks — usually just the newlines separating them. Those
+		// are kept (dropping them would run every block together on
+		// re-serialization) but held to the same markup allowlist.
+		if ( null !== $block_name ) {
+			$block_name = self::validate_block_name( (string) $block_name );
+			if ( null === $block_name ) {
+				return null;
+			}
+		}
+
+		$inner_blocks  = is_array( $block['innerBlocks'] ?? null ) ? array_values( $block['innerBlocks'] ) : array();
+		$inner_content = is_array( $block['innerContent'] ?? null ) ? $block['innerContent'] : array();
+
+		$clean_inner_blocks  = array();
+		$clean_inner_content = array();
+		$inner_index         = 0;
+
+		// innerContent interleaves literal HTML chunks with nulls, one null per
+		// inner block, in order. Dropping an inner block therefore means also
+		// dropping its null placeholder, or serialize_blocks() would pair every
+		// subsequent block with the wrong slot.
+		foreach ( $inner_content as $chunk ) {
+			if ( null !== $chunk ) {
+				$clean_inner_content[] = self::sanitize_render_html( (string) $chunk );
+				continue;
+			}
+
+			$child = $inner_blocks[ $inner_index ] ?? null;
+			++$inner_index;
+
+			if ( ! is_array( $child ) ) {
+				continue;
+			}
+
+			$sanitized_child = self::sanitize_block_node( $child, $depth + 1 );
+			if ( null === $sanitized_child ) {
+				continue;
+			}
+
+			$clean_inner_blocks[]  = $sanitized_child;
+			$clean_inner_content[] = null;
+		}
+
+		$attrs = is_array( $block['attrs'] ?? null ) ? self::sanitize_attribute_values( $block['attrs'] ) : array();
+
+		return array(
+			'blockName'    => $block_name,
+			'attrs'        => $attrs,
+			'innerBlocks'  => $clean_inner_blocks,
+			'innerHTML'    => self::sanitize_render_html( (string) ( $block['innerHTML'] ?? '' ) ),
+			'innerContent' => $clean_inner_content,
+		);
+	}
+
+	/**
+	 * Validates a block name for inclusion in a pattern.
+	 *
+	 * Unlike sanitize_target_block(), an unrecognized name has no sensible
+	 * substitute here — a pattern is a specific arrangement, and quietly
+	 * swapping in a Group would change what it is — so this returns null and
+	 * the caller drops the block.
+	 *
+	 * @param string $block_name Raw block name.
+	 * @return string|null Valid block name, or null.
+	 */
+	private static function validate_block_name( string $block_name ): ?string {
+		$block_name = strtolower( trim( $block_name ) );
+
+		if ( ! preg_match( '#^[a-z][a-z0-9-]*/[a-z][a-z0-9-]*$#', $block_name ) ) {
+			return null;
+		}
+
+		// As in sanitize_target_block(), registry membership is only enforced
+		// when the registry is actually populated — this can run from the meta
+		// sanitize callback before `init` has registered anything.
+		$registered = self::registered_block_names();
+		if ( ! empty( $registered ) && ! in_array( $block_name, $registered, true ) ) {
+			return null;
+		}
+
+		return $block_name;
+	}
+
+	/**
+	 * Allowlists a pattern's inserter keywords.
+	 *
+	 * @param array<int, mixed> $keywords Raw keywords.
+	 * @return string[]
+	 */
+	private static function sanitize_keywords( array $keywords ): array {
+		$clean = array();
+
+		foreach ( array_slice( $keywords, 0, 10 ) as $keyword ) {
+			if ( ! is_string( $keyword ) ) {
+				continue;
+			}
+
+			$keyword = sanitize_text_field( $keyword );
+			if ( '' !== $keyword ) {
+				$clean[] = $keyword;
+			}
+		}
+
+		return $clean;
+	}
+
+	/**
+	 * Clamps a pattern's preview viewport width to a sane pixel range.
+	 *
+	 * @param mixed $width Raw viewport width.
+	 * @return int
+	 */
+	private static function sanitize_viewport_width( $width ): int {
+		$width = is_numeric( $width ) ? (int) $width : 1200;
+
+		return max( 320, min( 2400, $width ) );
+	}
+
+	/**
+	 * Builds the slug (and registered name) for a style, variation or pattern.
+	 *
+	 * All three are namespaced with an `ai-` prefix so an AI-authored entry is
+	 * visibly distinct from a theme's or core's own wherever it shows up, and
+	 * so a generated CSS class (`.is-style-ai-…`) can't collide with one the
+	 * target block already ships.
 	 *
 	 * @param array<string, mixed> $def      Raw definition.
 	 * @param string               $fallback Label/title to derive a slug from when none is given.
-	 * @param string               $context  'style' or 'variation'; used only for the random fallback.
+	 * @param string               $context  'style', 'variation' or 'pattern'; used only for the random fallback.
 	 * @return string
 	 */
-	private static function style_or_variation_slug( array $def, string $fallback, string $context ): string {
+	private static function prefixed_slug( array $def, string $fallback, string $context ): string {
 		$raw  = ! empty( $def['name'] ) && is_string( $def['name'] ) ? $def['name'] : $fallback;
 		$slug = sanitize_title( $raw );
 
@@ -491,6 +759,27 @@ class AI_Block_Store {
 	}
 
 	/**
+	 * Returns a registered block's own attribute schema — which is exactly what
+	 * its `block.json` declares — or an empty array when the block isn't
+	 * registered (or has no attributes).
+	 *
+	 * @param string $block_name Block name, e.g. `core/media-text`.
+	 * @return array<string, array<string, mixed>> Attribute name => schema.
+	 */
+	public static function registered_block_attributes( string $block_name ): array {
+		if ( '' === $block_name || ! class_exists( '\\WP_Block_Type_Registry' ) ) {
+			return array();
+		}
+
+		$block_type = \WP_Block_Type_Registry::get_instance()->get_registered( $block_name );
+		if ( ! $block_type || ! is_array( $block_type->attributes ) ) {
+			return array();
+		}
+
+		return $block_type->attributes;
+	}
+
+	/**
 	 * Sanitizes a flat map of concrete attribute *values* (as opposed to an
 	 * attribute schema — see sanitize_attributes()).
 	 *
@@ -522,6 +811,32 @@ class AI_Block_Store {
 		}
 
 		return $clean;
+	}
+
+	/**
+	 * Drops attributes the target block doesn't actually declare.
+	 *
+	 * A variation presets attributes on a block that already exists, so the
+	 * block's own `block.json` schema is the authority on which names are real.
+	 * An invented attribute isn't dangerous, but it is silently inert — it
+	 * looks like it configures something and does nothing — which is worse than
+	 * it not being there, because the author has no way to tell the difference.
+	 *
+	 * As elsewhere, this is skipped when the block isn't registered (which
+	 * includes running before `init`), so an unknown target degrades to keeping
+	 * what was given rather than discarding all of it.
+	 *
+	 * @param array<string, mixed> $attributes   Sanitized attribute values.
+	 * @param string               $target_block Target block name.
+	 * @return array<string, mixed>
+	 */
+	private static function filter_to_block_attributes( array $attributes, string $target_block ): array {
+		$known = self::registered_block_attributes( $target_block );
+		if ( empty( $known ) ) {
+			return $attributes;
+		}
+
+		return array_intersect_key( $attributes, $known );
 	}
 
 	/**

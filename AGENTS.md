@@ -29,7 +29,7 @@ ai-block-creator/
 │   │   ├── BlockLibrarySidebar.js       # PluginSidebar: list/insert/refine/delete saved blocks
 │   │   ├── BlockPreview.js              # Interactive live preview & attribute tester
 │   │   ├── ImageDropzone.js             # Drag-and-drop & clipboard paste listener
-│   │   ├── StylePreview.js              # Preview for block styles/variations (no render template)
+│   │   ├── DefinitionPreview.js         # Preview for styles/variations/patterns (no render template)
 │   │   ├── kind-labels.js               # Shared human labels for the three definition kinds
 │   │   └── VoiceInput.js                # Web Speech API voice dictation
 │   ├── runtime/
@@ -38,7 +38,8 @@ ai-block-creator/
 │   └── styles.scss                      # Scoped editor & modal UI styling
 ├── tests/
 │   ├── php/                              # PHPUnit suite (bootstrap.php, RendererTest.php, BlockStoreTest.php,
-│   │                                     #   RestControllerTest.php, DefinitionKindsTest.php, KindRegistrationTest.php)
+│   │                                     #   RestControllerTest.php, DefinitionKindsTest.php,
+│   │                                     #   KindRegistrationTest.php, ResponseSchemaTest.php)
 │   └── js/mocks/                         # Jest module stubs — see jest-unit.config.js
 ├── build/                                # Webpack compiled output (committed — see below)
 ├── blueprint.json                        # WordPress Playground blueprint
@@ -76,10 +77,11 @@ ai-block-creator/
 
 A `/generate` request no longer always produces a custom block. It runs two model
 calls: **stage one** classifies the request (`custom_block` / `block_style` /
-`block_variation` and a target block, exposed on its own as `POST /plan`), and
-**stage two** builds that kind with a kind-specific system prompt. See
-`plans/architecture-and-design.md` §3 for the full rationale and §4 for each
-kind's schema. The rules that matter when editing this code:
+`block_variation` / `block_pattern`, plus a target block for the two that need
+one, exposed on its own as `POST /plan`), and **stage two** builds that kind with
+a kind-specific system prompt. See `plans/architecture-and-design.md` §3 for the
+full rationale and §4 for each kind's schema. The rules that matter when editing
+this code:
 
 - **`kind` is the discriminator, and its absence means `custom_block`.** Every
   definition stored before kinds existed has no `kind` field, and they must keep
@@ -89,12 +91,25 @@ kind's schema. The rules that matter when editing this code:
   plan's `kind`/`target_block` onto the model's output *after* the call. A model
   asked to write a style declaring itself something else would route its output
   through the wrong normalizer and the wrong registration API.
-- **The three kinds use three different registration APIs**, and a definition sent
+- **The four kinds use four different registration APIs**, and a definition sent
   to the wrong one fails silently: `register_block_type()` for custom blocks,
-  `register_block_style()` for styles, and the `get_block_type_variations` filter
-  for variations (*not* the `variations` argument to `register_block_type()` — the
-  blocks being varied are already registered by the time this plugin loads).
+  `register_block_style()` for styles, the `get_block_type_variations` filter for
+  variations (*not* the `variations` argument to `register_block_type()` — the
+  blocks being varied are already registered by the time this plugin loads), and
+  `register_block_pattern()` for patterns.
   `tests/php/KindRegistrationTest.php` guards each of those landings.
+- **A pattern's `content` cannot be string-filtered.** Block delimiters are HTML
+  comments, which `wp_kses()` strips outright, so filtering the raw markup would
+  destroy the pattern. `sanitize_pattern_content()` round-trips it through
+  `parse_blocks()` → per-node validation → `serialize_blocks()` instead. When
+  dropping a node, its `null` placeholder in the parent's `innerContent` must be
+  dropped too, or `serialize_blocks()` pairs every later block with the wrong slot.
+- **Patterns register nothing client-side.** They reach the inserter through the
+  editor settings rendered at page load, so a newly created one only appears
+  there after a reload — but inserting it works immediately, because it produces
+  ordinary blocks. Don't "fix" this by registering them in JS; there is no
+  client-side pattern registry entry to keep in sync, and `createBlocksFromDefinition()`
+  already parses the markup directly.
 - **Client-side, styles and variations must wait for `domReady`.** They attach to a
   block someone else registered, and `getBlockType()` has to already know about it;
   core's blocks come from `wp-block-library`, whose execution order relative to this
@@ -109,6 +124,47 @@ kind's schema. The rules that matter when editing this code:
 - **Kinds share one post type and are namespaced in `post_name`** (`{slug}`,
   `style-{slug}`, `variation-{slug}`) so a style can't overwrite the custom block
   that happens to share its slug. Custom blocks keep their bare slug.
+
+### 2c. Response Schemas & The Repair Turn
+
+Every model call sends a JSON Schema via `as_json_response( $schema )` — the
+WordPress AI Client accepts one, and core's own abilities use it. Two rules:
+
+- **Schemas are a request, not a guarantee.** Not every provider honors one, so
+  `AI_Block_Store`'s normalizers still allowlist every field independently. The
+  schema reduces how often the model is wrong; it never makes the normalizer
+  optional. `ai_block_creator_use_response_schema` disables schema sending for a
+  provider that rejects ours.
+- **Validate locally against a *relaxed* copy of the schema.** `schema_problems()`
+  strips `additionalProperties: false` via `relax_schema()` before calling
+  `rest_validate_value_from_schema()`. Keeping it strict would spend a whole
+  repair round-trip removing a stray `confidence` key that the normalizers drop
+  for free. Repair only what we cannot fix ourselves: missing required fields,
+  wrong types, bad enum values.
+
+When a response is unparseable or fails that check, `request_json_from_model()`
+runs **one** repair turn — a fresh call handed the schema, the specific problems,
+and the previous output — then gives up with a 502 carrying `problems`. The cap
+is one because each turn is a full round-trip, and a model that cannot fix it when
+told exactly what is wrong will not fix it on a third try. A successful repair
+fires `ai_block_creator_repaired_response`.
+
+`tests/php/ResponseSchemaTest.php` pins the schemas to the normalizers in both
+directions: a well-formed response of each kind must satisfy its own schema (or
+every generation pays for a needless repair), and a schema-valid response must
+survive normalization intact (or the schema is permitting shapes that silently
+vanish before storage).
+
+**Block metadata is a real input, not just prose.** A variation's schema is built
+from the *target block's own registered attributes* — which is exactly what its
+`block.json` declares — via `AI_Block_Store::registered_block_attributes()`. The
+same facts go into the prompt through `describe_block_attributes()`, so providers
+without structured-output support get them too, and the two cannot disagree
+because they read the same source. `filter_to_block_attributes()` then drops any
+attribute the target doesn't declare: an invented attribute is not dangerous, but
+it is silently inert, which is worse than absent because nothing tells the author.
+All three degrade to permissive when the block isn't registered (including before
+`init`), so an unknown target keeps what it was given rather than losing everything.
 
 ### 3. Frontend & Build Conventions
 - Use `@wordpress/scripts` (`npm run build` / `npm run start`). `build/` is committed to this repo (it's installed via `git:directory` — e.g. by the Playground blueprint — which doesn't run a build step), so a PR touching `src/` must include a rebuilt `build/`.
@@ -135,15 +191,18 @@ Specifically, this codebase follows that skill's guidance on:
 
 **Deliberate divergence from that skill**: its primary recommendation is registering via `block.json` + `register_block_type_from_metadata()` ("Prefer metadata registration... keeps metadata authoritative", `references/registration.md`). We don't do this, because `block.json` is inherently a *filesystem* artifact — one file per block, authored ahead of time — and this plugin's entire premise is blocks that never exist as files: they're generated by an AI at request time and persisted in the `ai_block_def` custom post type (`AI_Block_Store`). There's no file for a `block.json` to describe. We pass the equivalent metadata as a plain array to `register_block_type()` directly, built from the stored definition, instead. (If this plugin ever grows an "export this AI block to a real `block.json` for hand-editing" feature, *that* exported code should follow the skill's metadata-registration guidance — at that point it genuinely would be a normal, file-based block.)
 
-**b) How the AI itself is instructed to *generate* a definition** is a completely separate, plugin-specific concern, and it is now four prompts rather than one. `AI_Block_REST_Controller::build_planner_system_prompt()` describes the three kinds and the decision criteria between them for stage one; `build_system_prompt()` then dispatches to `build_custom_block_prompt()`, `build_block_style_prompt()`, or `build_block_variation_prompt()` for stage two. The custom-block prompt is the original one: a JSON schema (`name`, `title`, `icon`, `attributes`, `edit_fields`, `render_html`, `css`) and a small mustache-style template grammar (`{{var}}`, `{{{raw}}}`, `{{#if}}`/`{{^if}}`, `{{#list}}`) for the `render_html` field.
+**b) How the AI itself is instructed to *generate* a definition** is a completely separate, plugin-specific concern, and it is now six prompts rather than one. `AI_Block_REST_Controller::build_planner_system_prompt()` describes the four kinds and the decision criteria between them for stage one; `build_system_prompt()` then dispatches to `build_custom_block_prompt()`, `build_block_style_prompt()`, `build_block_variation_prompt()`, or `build_block_pattern_prompt()` for stage two; and `build_repair_system_prompt()` handles the repair turn (§2c). The custom-block prompt is the original one: a JSON schema (`name`, `title`, `icon`, `attributes`, `edit_fields`, `render_html`, `css`) and a small mustache-style template grammar (`{{var}}`, `{{{raw}}}`, `{{#if}}`/`{{^if}}`, `{{#list}}`) for the `render_html` field.
 
 Each stage-two prompt must stay honest about what its kind can actually deliver — a style prompt that talked about editable fields, or a variation prompt that talked about custom markup, would be describing a pipeline that doesn't exist. The planner prompt's decision criteria and the candidate target-block list are equally live surface: `candidate_target_blocks()` is what bounds the planner's `target_block`, and `AI_Block_Store::sanitize_target_block()` rejects anything outside the site's registry regardless.
 
 That grammar is **not** sourced from WordPress/Gutenberg documentation or the skill above — it's an original micro-templating language invented for this plugin, because Gutenberg's normal attribute-interpolation mechanisms (`block.json` `source`/`selector`, PHP string concatenation) aren't expressible in a single JSON field an LLM can reliably emit in one pass. It's implemented independently in `AI_Block_Renderer::render_template()` (PHP) and `interpolateTemplate()` (`dynamic-block-factory.js`); see §2 above ("Block Registration & Persistence Lifecycle") for the requirement to keep those two implementations behaviorally identical. If you change the grammar, the system prompt text describing it to the model must change too, and vice versa.
 
+Each stage-two prompt is paired with a JSON Schema from `build_response_schema()` (§2c). Those two must stay consistent with each other *and* with the matching normalizer: the prompt describes the shape, the schema constrains it, and the normalizer is what actually enforces it. Changing one without the others is how a field starts being asked for, permitted, and then silently discarded.
+
 The prompt is a live piece of product surface, not "documentation" — audit it against what the pipeline can actually deliver whenever either changes:
 - It used to ask the model for a `"category"` field that `register_dynamic_blocks()` never read (every AI block registers under the fixed `"ai-blocks"` inserter category regardless) — removed from the schema; asking an LLM to produce data you discard is wasted tokens and, worse, implies a choice matters when it doesn't.
 - It now explicitly states that no JavaScript ever runs for these blocks (no `<script>`, no `viewScript`, no Interactivity API — see §2's "Instant Dynamic Registration") and that inline event-handler attributes like `onclick` are silently stripped for non-`unfiltered_html` savers, directing the model to `<details>`/`<summary>` and CSS-only techniques (`:hover`/`:focus`) for anything that needs to look interactive instead. Before this, a stock suggestion in the UI ("FAQ Accordion... with expandable question panels") had no way to actually be delivered — the model's only tools were markup and CSS, with nothing telling it that. `tests/php/BlockStoreTest.php::test_details_and_summary_survive_kses_for_non_unfiltered_html_users` locks in that this guidance is actually deliverable through the sanitization pipeline, not just asserted.
+- The pattern prompt lists the blocks a pattern may use, because `AI_Block_Store` silently drops any block the site hasn't registered — a model left to guess at block names produces a pattern that quietly loses pieces. `pattern_block_allowlist()` is wider than `candidate_target_blocks()` (a pattern legitimately needs layout primitives nobody would hang a style on) but is intersected with the registry the same way.
 - It now also forbids referencing external images/fonts (`<img src="https://...">`, remote font/icon URLs) in `render_html`, matching the CSS-side `@import`/external-URL restriction that already existed — there's no upload mechanism, so a model-authored external reference is always either broken or an unreviewed third-party dependency.
 
 ---

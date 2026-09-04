@@ -13,11 +13,12 @@ import { starFilled, pencil, trash } from '@wordpress/icons';
 import apiFetch from '@wordpress/api-fetch';
 import VoiceInput from './VoiceInput';
 import {
-	createBlockFromDefinition,
+	createBlocksFromDefinition,
 	kindOf,
 	KIND_CUSTOM_BLOCK,
 	KIND_BLOCK_STYLE,
 	KIND_BLOCK_VARIATION,
+	KIND_BLOCK_PATTERN,
 } from '../runtime/dynamic-block-factory';
 import { definitionKindLabel } from './kind-labels';
 
@@ -37,6 +38,11 @@ function unregisterDefinition( def ) {
 				break;
 			case KIND_BLOCK_VARIATION:
 				unregisterBlockVariation( def.target_block, def.name );
+				break;
+			case KIND_BLOCK_PATTERN:
+				// Patterns are never registered client-side (see
+				// registerAiDefinition), so there is nothing to undo here; the
+				// server-side registration goes with the deleted post.
 				break;
 			default:
 				if ( getBlockType( def.name ) ) {
@@ -258,9 +264,9 @@ export default function BlockLibrarySidebar( { onLaunchModal, onRefine } ) {
 	}, [ fetchBlocks ] );
 
 	const handleInsert = ( block ) => {
-		const newBlock = createBlockFromDefinition( block );
-		if ( newBlock ) {
-			insertBlocks( newBlock );
+		const newBlocks = createBlocksFromDefinition( block );
+		if ( newBlocks ) {
+			insertBlocks( newBlocks );
 		}
 	};
 

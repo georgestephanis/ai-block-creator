@@ -58,7 +58,7 @@ final class DefinitionKindsTest extends TestCase
     {
         $normalized = AI_Block_Store::normalize_and_validate(
             array(
-                'kind'  => 'block_pattern',
+                'kind'  => 'block_template',
                 'title' => 'Not A Real Kind',
             )
         );
@@ -158,10 +158,13 @@ final class DefinitionKindsTest extends TestCase
                 'title'             => 'Two Column Feature',
                 'target_block'      => 'core/columns',
                 'attributes'        => array(
-                    'align'      => 'wide',
-                    'isStacked'  => false,
-                    'columns'    => 2,
-                    'style'      => array('color' => array('background' => '#111')),
+                    'align'             => 'wide',
+                    'isStackedOnMobile' => false,
+                    'verticalAlignment' => 'center',
+                    'style'             => array('color' => array('background' => '#111')),
+                    // core/columns declares no such attribute, so this is
+                    // silently inert if kept -- see filter_to_block_attributes().
+                    'notARealAttribute' => 'nope',
                 ),
                 'inner_block_names' => array('core/column', 'core/column'),
             )
@@ -175,11 +178,30 @@ final class DefinitionKindsTest extends TestCase
         // running these through the custom-block attribute *schema* sanitizer
         // would have discarded every one of them.
         $this->assertSame('wide', $normalized['attributes']['align']);
-        $this->assertFalse($normalized['attributes']['isStacked']);
-        $this->assertSame(2, $normalized['attributes']['columns']);
+        $this->assertFalse($normalized['attributes']['isStackedOnMobile']);
+        $this->assertSame('center', $normalized['attributes']['verticalAlignment']);
         $this->assertSame('#111', $normalized['attributes']['style']['color']['background']);
 
+        // Attributes the target block doesn't declare are dropped: they read
+        // as configuration and do nothing.
+        $this->assertArrayNotHasKey('notARealAttribute', $normalized['attributes']);
+
         $this->assertSame(array('core/column', 'core/column'), $normalized['inner_block_names']);
+    }
+
+    public function test_variation_attributes_survive_when_the_target_block_is_unknown(): void
+    {
+        // sanitize_target_block() falls back to core/group for an unrecognized
+        // target. Attribute filtering must not then throw away everything the
+        // author asked for on the strength of a fallback nobody chose.
+        $normalized = AI_Block_Store::normalize_and_validate(array(
+            'kind'         => 'block_variation',
+            'name'         => 'unknown-target',
+            'target_block' => 'core/group',
+            'attributes'   => array('align' => 'wide'),
+        ));
+
+        $this->assertSame('wide', $normalized['attributes']['align']);
     }
 
     public function test_variation_drops_unregistered_inner_blocks_rather_than_substituting_them(): void
@@ -278,6 +300,153 @@ final class DefinitionKindsTest extends TestCase
 
         $this->assertSame($first['id'], $second['id']);
         $this->assertSame('Second Label', $second['label']);
+    }
+
+    public function test_block_pattern_round_trips_valid_block_markup(): void
+    {
+        $markup = '<!-- wp:group --><div class="wp-block-group">'
+            . '<!-- wp:heading --><h2>Hello</h2><!-- /wp:heading -->'
+            . '<!-- wp:paragraph --><p>Body copy.</p><!-- /wp:paragraph -->'
+            . '</div><!-- /wp:group -->';
+
+        $normalized = AI_Block_Store::normalize_and_validate(array(
+            'kind'           => 'block_pattern',
+            'name'           => 'hero-with-cta',
+            'title'          => 'Hero With CTA',
+            'keywords'       => array('hero', 'banner'),
+            'viewport_width' => 1400,
+            'content'        => $markup,
+        ));
+
+        $this->assertSame(AI_Block_Store::KIND_BLOCK_PATTERN, $normalized['kind']);
+        $this->assertSame('ai-hero-with-cta', $normalized['name']);
+        $this->assertSame(array('hero', 'banner'), $normalized['keywords']);
+        $this->assertSame(1400, $normalized['viewport_width']);
+
+        // Delimiters must survive: they are HTML comments, so any string-level
+        // kses pass over the raw markup would have destroyed the pattern.
+        $this->assertStringContainsString('<!-- wp:group -->', $normalized['content']);
+        $this->assertStringContainsString('<!-- wp:heading -->', $normalized['content']);
+        $this->assertStringContainsString('<h2>Hello</h2>', $normalized['content']);
+        $this->assertStringContainsString('<!-- /wp:group -->', $normalized['content']);
+
+        // And it must still parse back into the same shape.
+        $reparsed = parse_blocks($normalized['content']);
+        $this->assertSame('core/group', $reparsed[0]['blockName']);
+        $this->assertCount(2, $reparsed[0]['innerBlocks']);
+    }
+
+    public function test_pattern_drops_blocks_this_site_does_not_have(): void
+    {
+        // A reference to an unregistered block renders as a broken-block
+        // warning in the editor, so it is removed rather than preserved.
+        $markup = '<!-- wp:group --><div class="wp-block-group">'
+            . '<!-- wp:heading --><h2>Kept</h2><!-- /wp:heading -->'
+            . '<!-- wp:vendor/not-real --><p>Dropped</p><!-- /wp:vendor/not-real -->'
+            . '<!-- wp:paragraph --><p>Also kept</p><!-- /wp:paragraph -->'
+            . '</div><!-- /wp:group -->';
+
+        $normalized = AI_Block_Store::normalize_and_validate(array(
+            'kind'    => 'block_pattern',
+            'name'    => 'mixed-blocks',
+            'content' => $markup,
+        ));
+
+        $this->assertStringNotContainsString('vendor/not-real', $normalized['content']);
+        $this->assertStringNotContainsString('Dropped', $normalized['content']);
+
+        // The surviving siblings must still be intact and correctly paired --
+        // dropping an inner block also means dropping its innerContent
+        // placeholder, or serialization pairs every later block with the
+        // wrong slot.
+        $reparsed = parse_blocks($normalized['content']);
+        $inner    = $reparsed[0]['innerBlocks'];
+        $this->assertCount(2, $inner);
+        $this->assertSame('core/heading', $inner[0]['blockName']);
+        $this->assertSame('core/paragraph', $inner[1]['blockName']);
+        $this->assertStringContainsString('Kept', $inner[0]['innerHTML']);
+        $this->assertStringContainsString('Also kept', $inner[1]['innerHTML']);
+    }
+
+    public function test_pattern_markup_is_sanitized_for_a_user_without_unfiltered_html(): void
+    {
+        // A pattern's markup lands in post content, so it sits behind the same
+        // trust boundary WordPress already applies there.
+        $deny_unfiltered_html = static function (array $allcaps): array {
+            $allcaps['unfiltered_html'] = false;
+            return $allcaps;
+        };
+        add_filter('user_has_cap', $deny_unfiltered_html);
+
+        try {
+            $normalized = AI_Block_Store::normalize_and_validate(array(
+                'kind'    => 'block_pattern',
+                'name'    => 'xss-attempt',
+                'content' => '<!-- wp:paragraph --><p onclick="alert(1)">Hi</p>'
+                    . '<script>alert(2)</script><!-- /wp:paragraph -->',
+            ));
+        } finally {
+            remove_filter('user_has_cap', $deny_unfiltered_html);
+        }
+
+        $this->assertStringNotContainsString('<script', $normalized['content']);
+        $this->assertStringNotContainsString('onclick', $normalized['content']);
+        $this->assertStringContainsString('Hi', $normalized['content']);
+    }
+
+    public function test_pattern_viewport_width_is_clamped(): void
+    {
+        foreach (array(0 => 320, 50 => 320, 99999 => 2400, 'nonsense' => 1200) as $input => $expected) {
+            $normalized = AI_Block_Store::normalize_and_validate(array(
+                'kind'           => 'block_pattern',
+                'name'           => 'clamp',
+                'viewport_width' => $input,
+            ));
+
+            $this->assertSame($expected, $normalized['viewport_width']);
+        }
+    }
+
+    public function test_pattern_carries_none_of_the_other_kinds_fields(): void
+    {
+        $normalized = AI_Block_Store::normalize_and_validate(array(
+            'kind'         => 'block_pattern',
+            'name'         => 'lean',
+            'content'      => '<!-- wp:paragraph --><p>x</p><!-- /wp:paragraph -->',
+            // None of these mean anything for a pattern.
+            'render_html'  => '<div>nope</div>',
+            'css'          => '.nope {}',
+            'target_block' => 'core/quote',
+            'attributes'   => array('title' => array('type' => 'string')),
+        ));
+
+        $this->assertArrayNotHasKey('render_html', $normalized);
+        $this->assertArrayNotHasKey('css', $normalized);
+        $this->assertArrayNotHasKey('target_block', $normalized);
+        $this->assertArrayNotHasKey('attributes', $normalized);
+    }
+
+    public function test_a_pattern_and_a_style_with_the_same_slug_are_stored_separately(): void
+    {
+        $style = AI_Block_Store::save(array(
+            'kind'         => 'block_style',
+            'name'         => 'shared-slug',
+            'label'        => 'Shared Slug Style',
+            'target_block' => 'core/quote',
+        ));
+        $this->assertNotWPError($style);
+        $this->created_post_ids[] = $style['id'];
+
+        $pattern = AI_Block_Store::save(array(
+            'kind'    => 'block_pattern',
+            'name'    => 'shared-slug',
+            'title'   => 'Shared Slug Pattern',
+            'content' => '<!-- wp:paragraph --><p>x</p><!-- /wp:paragraph -->',
+        ));
+        $this->assertNotWPError($pattern);
+        $this->created_post_ids[] = $pattern['id'];
+
+        $this->assertNotSame($style['id'], $pattern['id']);
     }
 
     public function test_by_kind_partitions_the_library(): void

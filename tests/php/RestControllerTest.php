@@ -167,10 +167,23 @@ final class RestControllerTest extends TestCase
         $request->set_header('Content-Type', 'application/json');
         $request->set_body(wp_json_encode(array(
             'prompt' => 'A gold pull quote',
-            'kind'   => 'block_pattern',
+            'kind'   => 'block_template',
         )));
 
         $this->assertSame(400, rest_do_request($request)->get_status());
+    }
+
+    public function test_generate_advertises_every_kind_as_a_valid_override(): void
+    {
+        // Asserted structurally rather than by dispatching: a valid `kind`
+        // reaches the handler, which would make a real model call, and the
+        // test suite must not depend on a configured AI provider (or take a
+        // network round-trip per run).
+        $routes = rest_get_server()->get_routes();
+        $args   = $routes['/ai-block-creator/v1/generate'][0]['args'];
+
+        $this->assertSame(AI_Block_Store::ALLOWED_KINDS, $args['kind']['enum']);
+        $this->assertArrayHasKey('target_block', $args);
     }
 
     public function test_save_round_trips_a_block_style_definition(): void
@@ -213,6 +226,27 @@ final class RestControllerTest extends TestCase
         $this->assertSame(AI_Block_Store::KIND_BLOCK_VARIATION, $data['block']['kind']);
         $this->assertSame('wide', $data['block']['attributes']['align']);
         $this->assertSame(array('core/column', 'core/column'), $data['block']['inner_block_names']);
+    }
+
+    public function test_save_round_trips_a_block_pattern_definition(): void
+    {
+        $response = $this->post_blocks(array(
+            'kind'     => 'block_pattern',
+            'name'     => 'rest-pattern-round-trip',
+            'title'    => 'REST Pattern Round Trip',
+            'keywords' => array('hero'),
+            'content'  => '<!-- wp:heading --><h2>Hi</h2><!-- /wp:heading -->',
+        ));
+        $data = $response->get_data();
+        if ( ! empty( $data['block']['id'] ) ) {
+            $this->created_post_ids[] = (int) $data['block']['id'];
+        }
+
+        $this->assertSame(200, $response->get_status());
+        $this->assertSame(AI_Block_Store::KIND_BLOCK_PATTERN, $data['block']['kind']);
+        $this->assertSame('ai-rest-pattern-round-trip', $data['block']['name']);
+        $this->assertStringContainsString('<!-- wp:heading -->', $data['block']['content']);
+        $this->assertSame(array('hero'), $data['block']['keywords']);
     }
 
     public function test_delete_refuses_to_touch_a_post_that_is_not_a_block_definition(): void

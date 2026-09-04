@@ -18,7 +18,7 @@ import ImageDropzone from './ImageDropzone';
 import BlockPreview from './BlockPreview';
 import {
 	registerAiDefinition,
-	createBlockFromDefinition,
+	createBlocksFromDefinition,
 	kindOf,
 } from '../runtime/dynamic-block-factory';
 import { kindLabel, kindExplanation, alternativeKinds } from './kind-labels';
@@ -197,6 +197,15 @@ export default function AIBlockCreatorModal( {
 				// treats `current_block` as a refinement and would keep that
 				// definition's kind, defeating the override entirely.
 				payload.kind = overrideKind;
+
+				// Pass along the block we already know this request is about,
+				// so a style/variation override doesn't cost a second planning
+				// call just to rediscover it.
+				const knownTarget =
+					plan?.target_block || currentBlock?.target_block;
+				if ( knownTarget ) {
+					payload.target_block = knownTarget;
+				}
 			} else if ( currentBlock ) {
 				payload.current_block = currentBlock;
 			}
@@ -313,8 +322,8 @@ export default function AIBlockCreatorModal( {
 			}
 		}
 
-		const newBlockInstance = createBlockFromDefinition( currentBlock );
-		if ( ! newBlockInstance ) {
+		const newBlocks = createBlocksFromDefinition( currentBlock );
+		if ( ! newBlocks ) {
 			setError(
 				__(
 					'This definition could not be inserted into the post.',
@@ -325,9 +334,9 @@ export default function AIBlockCreatorModal( {
 		}
 
 		if ( placeholderClientId ) {
-			replaceBlocks( placeholderClientId, newBlockInstance );
+			replaceBlocks( placeholderClientId, newBlocks );
 		} else {
-			insertBlocks( newBlockInstance );
+			insertBlocks( newBlocks );
 		}
 
 		handleClose();

@@ -21,6 +21,7 @@ use PHPUnit\Framework\TestCase;
 /**
  * @covers \AI_Block_Creator\register_ai_block_styles
  * @covers \AI_Block_Creator\filter_ai_block_variations
+ * @covers \AI_Block_Creator\register_ai_block_patterns
  * @covers \AI_Block_Creator\register_dynamic_blocks
  */
 final class KindRegistrationTest extends TestCase
@@ -159,6 +160,83 @@ final class KindRegistrationTest extends TestCase
         $this->assertNotContains(
             'ai-columns-only-variation',
             wp_list_pluck($other->get_variations(), 'name')
+        );
+    }
+
+    public function test_a_saved_pattern_is_registered_with_wordpress(): void
+    {
+        $pattern = AI_Block_Store::save(array(
+            'kind'        => 'block_pattern',
+            'name'        => 'registration-test-pattern',
+            'title'       => 'Registration Test Pattern',
+            'description' => 'A heading and a paragraph.',
+            'keywords'    => array('hero'),
+            'content'     => '<!-- wp:heading --><h2>Hi</h2><!-- /wp:heading -->',
+        ));
+        $this->assertIsArray($pattern);
+        $this->created_post_ids[] = $pattern['id'];
+
+        \AI_Block_Creator\register_ai_block_patterns();
+
+        $registry     = WP_Block_Patterns_Registry::get_instance();
+        $pattern_name = AI_Block_Store::PATTERN_NAMESPACE . '/ai-registration-test-pattern';
+
+        $this->assertTrue($registry->is_registered($pattern_name));
+
+        $registered = $registry->get_registered($pattern_name);
+        $this->assertSame('Registration Test Pattern', $registered['title']);
+        $this->assertStringContainsString('<!-- wp:heading -->', $registered['content']);
+        $this->assertContains(AI_Block_Store::PATTERN_NAMESPACE, $registered['categories']);
+
+        $registry->unregister($pattern_name);
+    }
+
+    public function test_an_empty_pattern_is_not_registered(): void
+    {
+        // A contentless pattern would show up in the inserter as a blank,
+        // broken-looking entry, so it is skipped rather than advertised.
+        $pattern = AI_Block_Store::save(array(
+            'kind'    => 'block_pattern',
+            'name'    => 'empty-pattern',
+            'title'   => 'Empty Pattern',
+            'content' => '',
+        ));
+        $this->assertIsArray($pattern);
+        $this->created_post_ids[] = $pattern['id'];
+
+        \AI_Block_Creator\register_ai_block_patterns();
+
+        $this->assertFalse(
+            WP_Block_Patterns_Registry::get_instance()->is_registered(
+                AI_Block_Store::PATTERN_NAMESPACE . '/ai-empty-pattern'
+            )
+        );
+    }
+
+    public function test_a_pattern_is_not_also_registered_as_a_block_type_or_style(): void
+    {
+        $pattern = AI_Block_Store::save(array(
+            'kind'    => 'block_pattern',
+            'name'    => 'pattern-not-a-block',
+            'title'   => 'Pattern Not A Block',
+            'content' => '<!-- wp:paragraph --><p>x</p><!-- /wp:paragraph -->',
+        ));
+        $this->assertIsArray($pattern);
+        $this->created_post_ids[] = $pattern['id'];
+
+        \AI_Block_Creator\register_dynamic_blocks();
+        \AI_Block_Creator\register_ai_block_styles();
+
+        $this->assertFalse(
+            WP_Block_Type_Registry::get_instance()->is_registered('ai-block/ai-pattern-not-a-block')
+        );
+        $this->assertArrayNotHasKey(
+            'ai-pattern-not-a-block',
+            WP_Block_Styles_Registry::get_instance()->get_registered_styles_for_block('core/group')
+        );
+
+        WP_Block_Patterns_Registry::get_instance()->unregister(
+            AI_Block_Store::PATTERN_NAMESPACE . '/ai-pattern-not-a-block'
         );
     }
 

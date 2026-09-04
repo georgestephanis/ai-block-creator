@@ -11,6 +11,7 @@ import {
 	KIND_CUSTOM_BLOCK,
 	KIND_BLOCK_STYLE,
 	KIND_BLOCK_VARIATION,
+	KIND_BLOCK_PATTERN,
 } from '../runtime/dynamic-block-factory';
 
 /**
@@ -25,6 +26,8 @@ export function kindLabel( kind ) {
 			return __( 'Block style', 'ai-block-creator' );
 		case KIND_BLOCK_VARIATION:
 			return __( 'Block variation', 'ai-block-creator' );
+		case KIND_BLOCK_PATTERN:
+			return __( 'Block pattern', 'ai-block-creator' );
 		default:
 			return __( 'Custom block', 'ai-block-creator' );
 	}
@@ -58,6 +61,11 @@ export function kindExplanation( kind, targetBlock ) {
 				),
 				targetBlock
 			);
+		case KIND_BLOCK_PATTERN:
+			return __(
+				'Inserts a ready-made arrangement of ordinary blocks that you then edit like any other content. It joins the inserter\u2019s pattern list the next time the editor loads.',
+				'ai-block-creator'
+			);
 		default:
 			return __(
 				'Creates a brand-new block with its own editable fields, added to the AI Custom Blocks category.',
@@ -73,7 +81,12 @@ export function kindExplanation( kind, targetBlock ) {
  * @return {Array<{kind: string, label: string}>} Alternatives.
  */
 export function alternativeKinds( currentKind ) {
-	return [ KIND_CUSTOM_BLOCK, KIND_BLOCK_STYLE, KIND_BLOCK_VARIATION ]
+	return [
+		KIND_CUSTOM_BLOCK,
+		KIND_BLOCK_STYLE,
+		KIND_BLOCK_VARIATION,
+		KIND_BLOCK_PATTERN,
+	]
 		.filter( ( kind ) => kind !== currentKind )
 		.map( ( kind ) => ( { kind, label: kindLabel( kind ) } ) );
 }

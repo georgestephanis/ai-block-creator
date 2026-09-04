@@ -12,6 +12,7 @@ import {
 	registerBlockVariation,
 	unregisterBlockVariation,
 	createBlock,
+	parse,
 } from '@wordpress/blocks';
 import {
 	useBlockProps,
@@ -537,6 +538,7 @@ export function registerDynamicAiBlock( blockDef ) {
 export const KIND_CUSTOM_BLOCK = 'custom_block';
 export const KIND_BLOCK_STYLE = 'block_style';
 export const KIND_BLOCK_VARIATION = 'block_variation';
+export const KIND_BLOCK_PATTERN = 'block_pattern';
 
 /**
  * Reads a definition's kind, defaulting to a custom block.
@@ -554,6 +556,7 @@ export function kindOf( def ) {
 		KIND_CUSTOM_BLOCK,
 		KIND_BLOCK_STYLE,
 		KIND_BLOCK_VARIATION,
+		KIND_BLOCK_PATTERN,
 	].includes( kind )
 		? kind
 		: KIND_CUSTOM_BLOCK;
@@ -700,37 +703,59 @@ export function registerAiDefinition( def ) {
 			return registerAiBlockStyle( def );
 		case KIND_BLOCK_VARIATION:
 			return registerAiBlockVariation( def );
+		case KIND_BLOCK_PATTERN:
+			// Nothing to register client-side. Patterns reach the inserter
+			// through the editor settings the server renders at page load, and
+			// inserting one produces plain blocks that need no registration of
+			// their own — so a freshly created pattern is immediately
+			// insertable here, and joins the inserter's pattern list on the
+			// next editor load.
+			return Boolean( def?.name && def?.content );
 		default:
 			return Boolean( registerDynamicAiBlock( def ) );
 	}
 }
 
 /**
- * Builds the editor block(s) that inserting a definition should produce.
+ * Builds the editor blocks that inserting a definition should produce.
  *
  * A custom block inserts itself, seeded with its attribute defaults. A style
  * inserts its *target* block carrying the style's class — there is nothing
  * else to insert, since a style is only ever a class on some other block. A
  * variation inserts its target block with the variation's preset attributes
- * and inner blocks.
+ * and inner blocks. A pattern inserts the blocks its markup describes, with
+ * no lasting link back to the definition.
+ *
+ * Always returns an array, since a pattern is inherently many blocks;
+ * insertBlocks() and replaceBlocks() both accept one.
  *
  * @param {Object} def Definition of any kind.
- * @return {Object|null} A block object from createBlock(), or null.
+ * @return {Array|null} Blocks to insert, or null when there is nothing to insert.
  */
-export function createBlockFromDefinition( def ) {
+export function createBlocksFromDefinition( def ) {
 	if ( ! def?.name ) {
 		return null;
 	}
 
 	const kind = kindOf( def );
 
+	if ( kind === KIND_BLOCK_PATTERN ) {
+		if ( ! def.content ) {
+			return null;
+		}
+		const blocks = parse( def.content );
+		return blocks?.length ? blocks : null;
+	}
+
 	if ( kind === KIND_BLOCK_STYLE ) {
 		if ( ! def.target_block ) {
 			return null;
 		}
-		return createBlock( def.target_block, {
-			className: `is-style-${ def.name }`,
-		} );
+		return [
+			createBlock( def.target_block, {
+				className: `is-style-${ def.name }`,
+			} ),
+		];
 	}
 
 	if ( kind === KIND_BLOCK_VARIATION ) {
@@ -740,11 +765,13 @@ export function createBlockFromDefinition( def ) {
 		const innerBlocks = Array.isArray( def.inner_block_names )
 			? def.inner_block_names.map( ( name ) => createBlock( name ) )
 			: [];
-		return createBlock(
-			def.target_block,
-			{ ...( def.attributes || {} ) },
-			innerBlocks
-		);
+		return [
+			createBlock(
+				def.target_block,
+				{ ...( def.attributes || {} ) },
+				innerBlocks
+			),
+		];
 	}
 
 	const blockName = def.name.startsWith( 'ai-block/' )
@@ -756,5 +783,5 @@ export function createBlockFromDefinition( def ) {
 		initialAttrs[ key ] = def.attributes[ key ]?.default ?? '';
 	} );
 
-	return createBlock( blockName, initialAttrs );
+	return [ createBlock( blockName, initialAttrs ) ];
 }

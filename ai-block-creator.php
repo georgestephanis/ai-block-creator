@@ -289,6 +289,53 @@ function register_ai_variation_styles(): void {
 add_action( 'init', __NAMESPACE__ . '\\register_ai_variation_styles', 20 );
 
 /**
+ * Registers every stored `block_pattern` definition.
+ *
+ * A pattern registers no block, no style and no variation: inserting it drops
+ * ordinary blocks into the post, which the author then edits like any other
+ * content. Nothing about the pattern survives insertion — there is no live
+ * link back to the definition — which is exactly what makes it the right
+ * answer for "an arrangement of blocks I want to start from".
+ *
+ * Runs at priority 20, after core's blocks (priority 10) exist, so
+ * AI_Block_Store has a populated registry to validate each pattern's block
+ * names against.
+ */
+function register_ai_block_patterns(): void {
+	if ( ! function_exists( 'register_block_pattern' ) ) {
+		return;
+	}
+
+	if ( function_exists( 'register_block_pattern_category' ) && ! \WP_Block_Pattern_Categories_Registry::get_instance()->is_registered( AI_Block_Store::PATTERN_NAMESPACE ) ) {
+		register_block_pattern_category(
+			AI_Block_Store::PATTERN_NAMESPACE,
+			array( 'label' => __( 'AI Patterns', 'ai-block-creator' ) )
+		);
+	}
+
+	foreach ( AI_Block_Store::by_kind( AI_Block_Store::KIND_BLOCK_PATTERN ) as $def ) {
+		// A pattern with no content would register an empty entry that looks
+		// broken in the inserter, so skip it rather than advertise nothing.
+		if ( empty( $def['name'] ) || empty( $def['content'] ) ) {
+			continue;
+		}
+
+		register_block_pattern(
+			AI_Block_Store::PATTERN_NAMESPACE . '/' . $def['name'],
+			array(
+				'title'         => $def['title'] ?? $def['name'],
+				'description'   => $def['description'] ?? '',
+				'content'       => $def['content'],
+				'categories'    => array( AI_Block_Store::PATTERN_NAMESPACE ),
+				'keywords'      => $def['keywords'] ?? array(),
+				'viewportWidth' => $def['viewport_width'] ?? 1200,
+			)
+		);
+	}
+}
+add_action( 'init', __NAMESPACE__ . '\\register_ai_block_patterns', 20 );
+
+/**
  * Registers (or updates) a per-block inline stylesheet handle, only when the
  * block actually has CSS. WordPress enqueues `style`/`editor_style` handles
  * only when the block is used, so — unlike inlining all blocks' CSS on
