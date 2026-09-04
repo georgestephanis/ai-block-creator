@@ -445,6 +445,26 @@ class AI_Block_REST_Controller extends WP_REST_Controller {
 	}
 
 	/**
+	 * Narrows a list of block names to those actually registered here.
+	 *
+	 * A block the site doesn't have is worse than useless in a prompt: the
+	 * model can pick it, and the pick is only rejected further downstream. When
+	 * the registry isn't populated yet the list is returned untouched, matching
+	 * how AI_Block_Store degrades in the same situation.
+	 *
+	 * @param string[] $block_names Candidate block names.
+	 * @return string[]
+	 */
+	private static function intersect_with_registry( array $block_names ): array {
+		$registered = AI_Block_Store::registered_block_names();
+		if ( empty( $registered ) ) {
+			return array_values( $block_names );
+		}
+
+		return array_values( array_intersect( $block_names, $registered ) );
+	}
+
+	/**
 	 * Whether a kind attaches to one specific block.
 	 *
 	 * Styles and variations do; custom blocks stand alone, and a pattern is an
@@ -513,17 +533,19 @@ class AI_Block_REST_Controller extends WP_REST_Controller {
 			'core/post-featured-image',
 		);
 
-		$registered = AI_Block_Store::registered_block_names();
-		if ( ! empty( $registered ) ) {
-			$candidates = array_values( array_intersect( $candidates, $registered ) );
-		}
-
 		/**
 		 * Filters the blocks an AI-authored style or variation may target.
 		 *
 		 * @param string[] $candidates Block names, e.g. `core/quote`.
 		 */
-		return (array) apply_filters( 'ai_block_creator_target_block_candidates', $candidates );
+		$candidates = (array) apply_filters( 'ai_block_creator_target_block_candidates', $candidates );
+
+		// Intersected *after* the filter as well, so a site can add its own
+		// blocks here but cannot put a block this site doesn't have in front of
+		// the model. Without this the planner could pick one, and the choice
+		// would only be caught later by AI_Block_Store -- which silently swaps
+		// in the fallback target, producing a result nobody asked for.
+		return self::intersect_with_registry( $candidates );
 	}
 
 	/**
@@ -1410,17 +1432,19 @@ PROMPT;
 			'core/social-link',
 		);
 
-		$registered = AI_Block_Store::registered_block_names();
-		if ( ! empty( $registered ) ) {
-			$candidates = array_values( array_intersect( $candidates, $registered ) );
-		}
-
 		/**
 		 * Filters the blocks an AI-authored pattern may be built from.
 		 *
 		 * @param string[] $candidates Block names, e.g. `core/group`.
 		 */
-		return (array) apply_filters( 'ai_block_creator_pattern_block_allowlist', $candidates );
+		$candidates = (array) apply_filters( 'ai_block_creator_pattern_block_allowlist', $candidates );
+
+		// Intersected *after* the filter as well, so a site can add its own
+		// blocks here but cannot put a block this site doesn't have in front of
+		// the model. Without this the planner could pick one, and the choice
+		// would only be caught later by AI_Block_Store -- which silently swaps
+		// in the fallback target, producing a result nobody asked for.
+		return self::intersect_with_registry( $candidates );
 	}
 
 	/**

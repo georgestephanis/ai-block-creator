@@ -16,7 +16,7 @@ ai-block-creator/
 ├── includes/
 │   ├── class-ai-block-store.php          # Single source of truth: read/validate/save/delete block defs
 │   ├── class-ai-block-renderer.php       # Dynamic PHP render callback & template parser
-│   └── class-ai-block-rest-controller.php # REST API controller (/generate, /blocks)
+│   └── class-ai-block-rest-controller.php # REST API controller (/plan, /generate, /blocks)
 ├── plans/
 │   ├── architecture-and-design.md        # Architecture specification document (kept current)
 │   └── done/                             # Dated, point-in-time records — not living docs
@@ -24,8 +24,10 @@ ai-block-creator/
 │       └── TODO-2026-09-03.md            # That review's task list (what got fixed, what's still open)
 ├── src/
 │   ├── index.js                          # Gutenberg editor entrypoint & plugin registration
+│   ├── inserter-card-controller.js       # Mounts the AI card into the native block inserter
 │   ├── components/
 │   │   ├── AIBlockCreatorModal.js       # Main creation modal & conversational thread
+│   │   ├── AIInserterCard.js            # The card rendered into the native inserter
 │   │   ├── BlockLibrarySidebar.js       # PluginSidebar: list/insert/refine/delete saved blocks
 │   │   ├── BlockPreview.js              # Interactive live preview & attribute tester
 │   │   ├── ImageDropzone.js             # Drag-and-drop & clipboard paste listener
@@ -245,6 +247,25 @@ The prompt is a live piece of product surface, not "documentation" — audit it 
 - It now explicitly states that no JavaScript ever runs for these blocks (no `<script>`, no `viewScript`, no Interactivity API — see §2's "Instant Dynamic Registration") and that inline event-handler attributes like `onclick` are silently stripped for non-`unfiltered_html` savers, directing the model to `<details>`/`<summary>` and CSS-only techniques (`:hover`/`:focus`) for anything that needs to look interactive instead. Before this, a stock suggestion in the UI ("FAQ Accordion... with expandable question panels") had no way to actually be delivered — the model's only tools were markup and CSS, with nothing telling it that. `tests/php/BlockStoreTest.php::test_details_and_summary_survive_kses_for_non_unfiltered_html_users` locks in that this guidance is actually deliverable through the sanitization pipeline, not just asserted.
 - The pattern prompt lists the blocks a pattern may use, because `AI_Block_Store` silently drops any block the site hasn't registered — a model left to guess at block names produces a pattern that quietly loses pieces. `pattern_block_allowlist()` is wider than `candidate_target_blocks()` (a pattern legitimately needs layout primitives nobody would hang a style on) but is intersected with the registry the same way.
 - It now also forbids referencing external images/fonts (`<img src="https://...">`, remote font/icon URLs) in `render_html`, matching the CSS-side `@import`/external-URL restriction that already existed — there's no upload mechanism, so a model-authored external reference is always either broken or an unreviewed third-party dependency.
+
+---
+
+### 5. Hooks
+
+Every extension point is prefixed `ai_block_creator_`, and **the reference table lives in
+`README.md` ("Hooks")** — keep it there rather than duplicating it here. Two rules when adding
+one:
+
+- Give it an inline `@param` docblock at the `apply_filters()`/`do_action()` call site, as the
+  existing ones have, *and* a row in that table. A hook documented in only one of those places
+  is a hook nobody finds.
+- Anything that changes what the model is allowed to target (`*_target_block_candidates`,
+  `*_pattern_block_allowlist`) must be intersected with the block registry *after* the filter
+  runs (`intersect_with_registry()`), not before. Filtering last is what lets a site point the
+  AI at its own blocks; intersecting last is what stops it naming one the site doesn't have.
+  Get the order wrong and the planner can pick a block that only gets rejected downstream,
+  where `AI_Block_Store` silently swaps in the fallback target and produces a result nobody
+  asked for.
 
 ---
 

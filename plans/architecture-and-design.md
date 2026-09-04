@@ -84,9 +84,11 @@ The two easiest to confuse are the middle pair, and the distinction is simply
 arity: **one block, preset** is a variation; **several blocks, arranged** is a
 pattern. The planner prompt says exactly that, in those words.
 
-`target_block` is validated against a curated candidate list intersected with the
-site's block registry (`AI_Block_REST_Controller::candidate_target_blocks()`,
-filterable via `ai_block_creator_target_block_candidates`). The whole registry is
+`target_block` is validated against a curated candidate list
+(`AI_Block_REST_Controller::candidate_target_blocks()`, filterable via
+`ai_block_creator_target_block_candidates`) which is intersected with the site's
+block registry *after* filtering — so a site can point the AI at its own blocks,
+but cannot put one the site doesn't have in front of the model. The whole registry is
 neither useful nor safe to put in a prompt: a site with a dozen plugins has
 hundreds of registered blocks, most of which nobody wants an AI-authored style on.
 

@@ -255,6 +255,36 @@ final class ResponseSchemaTest extends TestCase
         $this->assertSame(array('type' => 'object'), $schema['properties']['attributes']);
     }
 
+    public function test_a_filter_cannot_offer_the_model_a_block_this_site_lacks(): void
+    {
+        // The filters exist so a site can point the AI at its own blocks. They
+        // are intersected with the registry *after* running, so an unregistered
+        // name can't reach the prompt -- the planner would pick it and the
+        // choice would only be caught later, where it silently becomes the
+        // fallback target instead.
+        $add_blocks = static function ( array $blocks ): array {
+            $blocks[] = 'core/separator';           // real, and not in the default list for patterns
+            $blocks[] = 'vendor/not-a-real-block';  // not registered anywhere
+            return $blocks;
+        };
+
+        add_filter('ai_block_creator_target_block_candidates', $add_blocks);
+        add_filter('ai_block_creator_pattern_block_allowlist', $add_blocks);
+
+        try {
+            $targets  = $this->call('candidate_target_blocks');
+            $patterns = $this->call('pattern_block_allowlist');
+        } finally {
+            remove_filter('ai_block_creator_target_block_candidates', $add_blocks);
+            remove_filter('ai_block_creator_pattern_block_allowlist', $add_blocks);
+        }
+
+        foreach (array($targets, $patterns) as $list) {
+            $this->assertContains('core/separator', $list);
+            $this->assertNotContains('vendor/not-a-real-block', $list);
+        }
+    }
+
     public function test_block_attributes_are_described_to_the_model_in_the_prompt(): void
     {
         // Providers without structured-output support only get the prompt, so
