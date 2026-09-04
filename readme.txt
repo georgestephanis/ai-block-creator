@@ -70,11 +70,12 @@ Saved blocks are stored as a private custom post type. Deactivating the plugin d
 == Changelog ==
 
 = 1.0.0 =
-* Two-stage generation: requests are first classified as a custom block, a block style, a block variation, or a block pattern, then built accordingly — with the reasoning shown and overridable in the editor.
-* Requests now carry a JSON response schema, with a single automatic repair turn when a model returns the wrong shape anyway.
-* Block variations are validated against the target block's own registered attributes, so a variation can't be saved with settings that would silently do nothing.
-* Generated styles and variations have their CSS confined to their own class automatically, so an AI-authored style can't restyle the rest of your site.
-* Initial release: Conversational custom block creation, voice dictation, screenshot dropzone, live preview, dynamic block registration, and WordPress AI Client integration.
-* Security hardening: saving/deleting a block now requires the `unfiltered_html` capability, and both the block's markup and its CSS are validated/sanitized before they're stored.
-* Added the AI Block Library panel for managing previously saved blocks (insert, refine, delete).
-* The editor UI now follows your chosen admin color scheme instead of a fixed accent color.
+Initial release.
+
+* Conversational block creation: describe what you want, refine it across multiple turns, and insert it — with voice dictation, and a screenshot dropzone when your provider accepts images.
+* Two-stage generation: every request is first classified as a custom block, a block style, a block variation, or a block pattern, then built accordingly. The reasoning is shown in the editor, and one click rebuilds the request as any of the other kinds.
+* Schema-validated responses: requests carry a JSON schema of the shape they expect, with a single automatic repair turn if a model returns something malformed.
+* AI Block Library panel for inserting, refining, and deleting anything you've saved.
+* Generated CSS is confined to its own class, so an AI-authored style cannot restyle the rest of your site. Block variations are checked against the target block's own registered attributes, so they can't be saved with settings that would silently do nothing.
+* Saving or deleting a definition requires the `unfiltered_html` capability, and all stored markup and CSS is validated and sanitized regardless of what the model returned.
+* The editor UI follows your chosen admin color scheme.

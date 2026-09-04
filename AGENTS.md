@@ -269,6 +269,31 @@ one:
 
 ---
 
+## Releasing
+
+Version numbers are **never** bumped without the maintainer's explicit go-ahead — a
+release is their decision, not something to fold into an unrelated change. When one is
+authorized:
+
+1. The version must agree in all four places it is declared: the plugin header `Version`,
+   `AI_Block_Creator\VERSION` in `ai-block-creator.php`, `Stable tag` in `readme.txt`, and
+   `version` in `package.json`. A mismatch between the header and `Stable tag` is what
+   wp.org actually serves from, so it is not cosmetic.
+2. `Tested up to` in `readme.txt` must name a WordPress version the plugin was actually
+   run against, not the newest one that exists.
+3. Rebuild `build/` and commit it. It is committed deliberately (the plugin is installed
+   via `git:directory`, e.g. by the Playground blueprint, which runs no build step), so a
+   tag pointing at a stale bundle ships stale code.
+4. Full suite green: `composer test`, `composer lint`, `npm run test`.
+5. The `= x.y.z =` changelog section should read as a description of the release, not as a
+   diff against the branch that produced it — no "now", no "added", no restating internal
+   refactors that changed nothing a user can observe.
+
+**Tags are the bare version — `1.0.0`, not `v1.0.0`** — matching `Stable tag` and the
+wp.org/SVN convention this plugin's readme is written for.
+
+---
+
 ## Verification Commands
 
 - **Lint PHP** (WordPress-Extra + PHPCompatibilityWP, `testVersion=7.4-`):
